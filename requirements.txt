@@ -1,0 +1,46 @@
+# Core data processing
+pandas==2.2.2
+numpy==1.26.4
+pyarrow==16.0.0
+
+# Visualization
+matplotlib==3.9.0
+seaborn==0.13.2
+wordcloud==1.9.3
+
+# NLP & text processing
+nltk==3.8.1
+sentence-splitter==1.4
+
+# Embeddings & ML
+sentence-transformers==3.0.1
+torch==2.3.0
+transformers==4.42.4
+
+# Retrieval
+faiss-cpu==1.8.0
+rank-bm25==0.2.2
+
+# API clients
+openai
+groq
+ipywidgets
+
+# Evaluation metrics
+rouge-score==0.1.2
+bert-score==0.3.13
+ragas==0.1.21
+datasets==2.20.0
+
+# UI
+gradio
+
+# Utilities
+tqdm==4.66.4
+python-dotenv==1.0.1
+pyyaml==6.0.1
+scikit-learn==1.5.0
+
+# EDA-6: near-duplicate detection via MinHash
+# Falls back to simple hashing if not available
+datasketch==1.6.4

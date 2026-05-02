@@ -1,0 +1,98 @@
+# ============================================================
+# config.yaml — Vietnamese Financial News RAG System
+# Pipeline v2 §0.3
+#
+# Path convention:
+#   - Colab: /content/drive/MyDrive/rag-vn-finance/...
+#   - Local:  paths relative to implementation/ root
+#             (resolved by src/utils.py::resolve_path)
+# ============================================================
+
+data:
+  # Raw input
+  raw_path: "data/raw/financial_news_10k.csv"
+  raw_path_colab: "/content/drive/MyDrive/rag-vn-finance/data/raw/financial_news_10k.csv"
+
+  # Outputs of Phase 1
+  processed_path: "data/processed/cleaned.parquet"
+  processed_path_colab: "/content/drive/MyDrive/rag-vn-finance/data/processed/cleaned.parquet"
+
+  drop_log_path: "data/processed/drop_log.csv"
+  drop_log_path_colab: "/content/drive/MyDrive/rag-vn-finance/data/processed/drop_log.csv"
+
+  eda_report_path: "data/processed/eda_report.json"
+  eda_report_path_colab: "/content/drive/MyDrive/rag-vn-finance/data/processed/eda_report.json"
+
+  eda_plots_dir: "data/processed/eda_plots"
+  eda_plots_dir_colab: "/content/drive/MyDrive/rag-vn-finance/data/processed/eda_plots"
+
+chunking:
+  strategies: ["fixed_size", "sentence_aware", "article_level"]
+  fixed_size:
+    chunk_size: 256
+    overlap: 32
+  sentence_aware:
+    max_sentences: 5
+    overlap_sentences: 1
+  article_level:
+    max_tokens: 512
+
+  # Output dirs (local / Colab)
+  output_dir: "data/chunks"
+  output_dir_colab: "/content/drive/MyDrive/rag-vn-finance/data/chunks"
+
+embedding:
+  model_name: "intfloat/multilingual-e5-large"
+  batch_size: 64
+  checkpoint_every: 100
+  device: "auto"   # auto-selects cuda if available, else cpu
+
+  output_dir: "embeddings"
+  output_dir_colab: "/content/drive/MyDrive/rag-vn-finance/embeddings"
+
+indexing:
+  faiss_metric: "cosine"
+
+  output_dir: "indexes"
+  output_dir_colab: "/content/drive/MyDrive/rag-vn-finance/indexes"
+
+  bm25_dir: "bm25"
+  bm25_dir_colab: "/content/drive/MyDrive/rag-vn-finance/bm25"
+
+retrieval:
+  top_k_dense: 10
+  top_k_sparse: 10
+  top_k_hybrid: 10
+  rrf_k: 60
+
+generation:
+  # Expected: qwen/qwen-2.5-7b-instruct:free
+  model: "google/gemma-4-31b-it:free"
+  max_tokens: 1024
+  temperature: 0.2
+
+synthetic_qa:
+  articles_per_batch: 10        # 10 articles per single API call
+  qa_per_article: 2             # 2 QA pairs per article
+  total_articles: 500           # 500 / 10 = 50 requests total
+  checkpoint_every_batches: 5   # checkpoint every 50 articles
+
+  output_dir: "synthetic_qa"
+  output_dir_colab: "/content/drive/MyDrive/rag-vn-finance/synthetic_qa"
+
+evaluation:
+  # Primary evaluator — zero cost, cross-model, no same-model bias
+  # Ref: Zheng et al. (2023), "Judging LLM-as-a-Judge with MT-Bench"
+  groq_model: "llama-3.3-70b-versatile"  # verify at Phase 0
+  groq_rpm_limit: 30
+  eval_sample_size: 200         # full test set
+
+  # Optional / Advanced — run only if time permits after demo
+  ragas_enabled: false
+
+  output_dir: "evaluation"
+  output_dir_colab: "/content/drive/MyDrive/rag-vn-finance/evaluation"
+
+checkpoints:
+  dir: "checkpoints"
+  dir_colab: "/content/drive/MyDrive/rag-vn-finance/checkpoints"

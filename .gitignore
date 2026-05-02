@@ -1,0 +1,79 @@
+# ============================================================
+# .gitignore — Vietnamese Financial News RAG System
+# ============================================================
+
+# API keys and secrets
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# Data files (too large for git — stored on Drive)
+data/raw/
+data/processed/*.parquet
+data/processed/*.json
+data/chunks/
+embeddings/
+indexes/
+bm25/
+synthetic_qa/*.parquet
+synthetic_qa/*.jsonl
+synthetic_qa/*.json
+evaluation/*.csv
+evaluation/*.jsonl
+evaluation/*.json
+checkpoints/
+
+# Keep directory structure markers
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+!data/processed/eda_plots/.gitkeep
+!data/chunks/fixed_size/.gitkeep
+!data/chunks/sentence_aware/.gitkeep
+!data/chunks/article_level/.gitkeep
+!embeddings/fixed_size/.gitkeep
+!embeddings/sentence_aware/.gitkeep
+!embeddings/article_level/.gitkeep
+!indexes/fixed_size/.gitkeep
+!indexes/sentence_aware/.gitkeep
+!indexes/article_level/.gitkeep
+!bm25/fixed_size/.gitkeep
+!bm25/sentence_aware/.gitkeep
+!bm25/article_level/.gitkeep
+!synthetic_qa/.gitkeep
+!evaluation/.gitkeep
+!checkpoints/.gitkeep
+
+# OS artifacts
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Large model files
+*.bin
+*.safetensors
+*.ot
+
+# FAISS index files
+*.faiss
+
+# Logs
+*.log
