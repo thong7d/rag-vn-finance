@@ -1,6 +1,6 @@
 # Core data processing
 pandas==2.2.2
-numpy==1.26.4
+numpy
 pyarrow==16.0.0
 
 # Visualization
