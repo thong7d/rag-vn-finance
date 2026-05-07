@@ -1,6 +1,6 @@
 # ============================================================
 # config.yaml — Vietnamese Financial News RAG System
-# Pipeline v2 §0.3
+# Pipeline v3 §0.3
 #
 # Path convention:
 #   - Colab: /content/drive/MyDrive/rag-vn-finance/...
@@ -66,7 +66,7 @@ retrieval:
   rrf_k: 60
 
 generation:
-  # Expected: qwen/qwen-2.5-7b-instruct:free
+  # OpenRouter free model — verified at Phase 0
   model: "google/gemma-4-31b-it:free"
   max_tokens: 1024
   temperature: 0.2

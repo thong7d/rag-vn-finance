@@ -296,6 +296,19 @@ print(json.dumps(eda8, indent=2, ensure_ascii=False))
 ipy_display(Image(filename=os.path.join(plots_dir, 'eda8_correlation.png'), width=800))
 
 # %% [markdown]
+# ## Cell 10b — EDA-9: Niche Glossary (§1.3)
+
+# %%
+from src.preprocessing import eda_niche_glossary
+
+eda9 = eda_niche_glossary(df, plots_dir)
+
+print("EDA-9 Results:")
+print(json.dumps(eda9, indent=2, ensure_ascii=False))
+
+ipy_display(Image(filename=os.path.join(plots_dir, 'eda9_niche_glossary.png'), width=800))
+
+# %% [markdown]
 # ## Cell 11 — Assemble EDA Report (§1.4)
 
 # %%
@@ -303,7 +316,7 @@ from src.preprocessing import assemble_eda_report, save_eda_report
 
 eda_sections = {
     'eda1': eda1, 'eda2': eda2, 'eda3': eda3, 'eda4': eda4,
-    'eda5': eda5, 'eda6': eda6, 'eda7': eda7, 'eda8': eda8
+    'eda5': eda5, 'eda6': eda6, 'eda7': eda7, 'eda8': eda8, 'eda9': eda9
 }
 
 eda_report = assemble_eda_report(df_raw, df, eda_sections)
@@ -341,7 +354,7 @@ processed_path = resolve_path(config['data'], 'processed_path')
 if not os.path.isabs(processed_path):
     processed_path = str(REPO_ROOT / processed_path)
 
-df = save_cleaned(df, processed_path)
+df.to_parquet(processed_path, index=False, compression="snappy")
 
 # Verify output
 parquet_size_mb = os.path.getsize(processed_path) / 1e6
@@ -359,6 +372,6 @@ if os.path.exists(drop_log_path):
     drop_df = pd.read_csv(drop_log_path)
     print(f"  Drop log: {len(drop_df)} entries")
 
-print("\n✅ Phase 1 complete. Confirm 'Xong' before proceeding to Phase 2 (Chunking).")
+print("\n✅ Phase 1 complete")
 
 

@@ -15,6 +15,12 @@ from urllib.parse import urlparse
 
 import pandas as pd
 import numpy as np
+try:
+    from underthesea import ner
+except (ImportError, OSError) as e:
+    import logging
+    logging.warning(f"Không thể tải NER model (Underthesea) do lỗi: {e}. Hệ thống sẽ gán null cho cột 'entities'.")
+    ner = None
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -116,6 +122,56 @@ def clean_pipeline(df: pd.DataFrame, drop_log_path: str) -> pd.DataFrame:
     drop_df = pd.DataFrame(drop_records)
     drop_df.to_csv(drop_log_path, index=False, encoding="utf-8")
     logger.info(f"Drop log saved to {drop_log_path} — total dropped: {len(drop_records)}/{initial_count}")
+
+    # YÊU CẦU 1: Semantic Enrichment
+    logger.info("Applying Semantic Enrichment...")
+    
+    # [Ticker Extraction]
+    def extract_tickers(text):
+        if not isinstance(text, str): return []
+        patterns = [
+            r'\(([A-Z]{3})\)',
+            r'\[([A-Z]{3})\]',
+            r'(?:mã CK|mã ck|mã Ck):?\s*([A-Z]{3})',
+            r'(?:cổ phiếu|mã)\s+([A-Z]{3})'
+        ]
+        tickers = []
+        for p in patterns:
+            tickers.extend(re.findall(p, text))
+        return list(set(tickers))
+
+    df['tickers'] = df.apply(lambda row: json.dumps(list(set(extract_tickers(str(row.get('content', ''))) + extract_tickers(str(row.get('title', '')))))), axis=1)
+
+    # [Staleness Flag]
+    df['is_historical'] = df['year'] < 2020
+
+    # [Numerical Density]
+    def calc_num_density(text):
+        text = str(text)
+        if not text: return 0.0
+        digits = sum(c.isdigit() for c in text)
+        return digits / max(len(text), 1)
+    
+    df['numerical_density'] = df['content'].apply(calc_num_density)
+
+    # [NER Entities]
+    def extract_ner(text):
+        if not isinstance(text, str) or not text.strip(): return ""
+        if 'ner' not in globals() or ner is None: return ""
+        text = text[:1000]
+        try:
+            results = ner(text)
+            entities = []
+            for word, pos, chunk, label in results:
+                if label != 'O':
+                    ent_type = label.split('-')[-1]
+                    if ent_type in ['LOC', 'ORG', 'PER']:
+                        entities.append(word.replace('_', ' '))
+            return ",".join(list(set(entities)))
+        except Exception:
+            return ""
+
+    df['entities'] = df['content'].apply(extract_ner)
 
     df = df.reset_index(drop=True)
     logger.info(f"Cleaning complete. Final shape: {df.shape}")
@@ -507,6 +563,42 @@ def eda_correlation(df: pd.DataFrame, plots_dir: str) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# EDA-9: Niche Glossary
+# ---------------------------------------------------------------------------
+
+def eda_niche_glossary(df: pd.DataFrame, plots_dir: str) -> dict:
+    def_keywords = ["có nghĩa là", "được hiểu là", "là thuật ngữ", "khái niệm"]
+    
+    def contains_def(text):
+        text = str(text).lower()
+        return any(k in text for k in def_keywords)
+        
+    has_definition = df['content'].apply(contains_def)
+    def_articles = df[has_definition]
+    def_count = len(def_articles)
+    
+    fig, ax = plt.subplots(figsize=(10, 6))
+    fig.suptitle("EDA-9: Articles with Definitions by Category", fontsize=14, fontweight="bold")
+    
+    if def_count > 0:
+        cat_counts = def_articles['category'].value_counts()
+        cat_counts.plot(kind='bar', ax=ax, color='mediumseagreen')
+        ax.set_title("Count of Definition Articles")
+        ax.set_xlabel("Category")
+        ax.set_ylabel("Article Count")
+        ax.tick_params(axis="x", rotation=45)
+    else:
+        ax.text(0.5, 0.5, "No definition articles found", ha="center", va="center")
+        
+    _save_plot(fig, plots_dir, "eda9_niche_glossary.png")
+    
+    return {
+        "definition_articles_count": int(def_count),
+        "design_implication": "Articles containing definitions can be leveraged for terminology-specific QA pairs."
+    }
+
+
+# ---------------------------------------------------------------------------
 # 1.4  Assemble EDA report
 # ---------------------------------------------------------------------------
 
@@ -525,6 +617,7 @@ def assemble_eda_report(df_raw: pd.DataFrame, df_clean: pd.DataFrame,
         **eda_sections.get("eda6", {}),
         **eda_sections.get("eda7", {}),
         **eda_sections.get("eda8", {}),
+        **eda_sections.get("eda9", {}),
         "design_implications": [
             v["design_implication"]
             for k, v in eda_sections.items()
