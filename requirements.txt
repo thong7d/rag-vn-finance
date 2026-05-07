@@ -14,7 +14,7 @@ sentence-splitter==1.4
 underthesea
 
 # Embeddings & ML
-torch>=2.3.0
+# torch>=2.3.0
 transformers==4.42.4
 sentence-transformers>=3.0.1
 
