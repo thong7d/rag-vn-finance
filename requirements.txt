@@ -1,6 +1,6 @@
 # Core data processing
 pandas==2.2.2
-numpy
+numpy<2.0.0
 pyarrow==16.0.0
 
 # Visualization
@@ -11,11 +11,12 @@ wordcloud==1.9.3
 # NLP & text processing
 nltk==3.8.1
 sentence-splitter==1.4
+underthesea
 
 # Embeddings & ML
-sentence-transformers==3.0.1
-torch==2.3.0
-transformers==4.42.4
+torch>=2.3.0
+transformers>=4.42.4
+sentence-transformers>=3.0.1
 
 # Retrieval
 faiss-cpu==1.8.0
@@ -41,9 +42,5 @@ python-dotenv==1.0.1
 pyyaml==6.0.1
 scikit-learn==1.5.0
 
-# EDA-6: near-duplicate detection via MinHash
-# Falls back to simple hashing if not available
+# Near-duplicate detection
 datasketch==1.6.4
-
-# NLP extra tools
-underthesea
