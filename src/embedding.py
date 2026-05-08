@@ -159,44 +159,33 @@ def encode_chunks_with_checkpoint(
 # Task 2 — build_faiss_index
 # ---------------------------------------------------------------------------
 
-def build_faiss_index(
-    npy_path: str,
-    index_output_path: str,
-) -> faiss.IndexFlatIP:
+def build_faiss_index(npy_path: str, index_output_path: str, dim: int = 1024):
     """
-    Load the embedding matrix, L2-normalise, build IndexFlatIP, and save.
-
-    L2 normalisation converts inner-product search into cosine-similarity
-    search without any additional overhead at query time.
-
-    Parameters
-    ----------
-    npy_path : str
-        Path to the float32 .npy embedding matrix (N × 1024).
-    index_output_path : str
-        Destination path for the .faiss file.
-
-    Returns
-    -------
-    faiss.IndexFlatIP
-        The built (and saved) FAISS index.
+    Builds a FAISS IndexFlatIP from a raw binary memmap file.
     """
-    logger.info(f"Loading embeddings from: {npy_path}")
-    embeddings = np.load(npy_path).astype("float32")
-    logger.info(f"Embedding matrix shape: {embeddings.shape}")
-
-    # In-place L2 normalisation — required for cosine similarity via IP
+    logger.info(f"Loading raw embeddings from: {npy_path}")
+    
+    # 1. Tự động tính số lượng vector dựa trên dung lượng file đĩa (4 bytes cho kiểu float32)
+    file_size = os.path.getsize(npy_path)
+    num_vectors = file_size // (4 * dim)
+    
+    # 2. Đọc file dưới dạng raw memmap
+    embeddings_raw = np.memmap(npy_path, dtype='float32', mode='r', shape=(num_vectors, dim))
+    logger.info(f"Embedding matrix shape inferred: {embeddings_raw.shape}")
+    
+    # 3. Tạo bản sao trên RAM để chuẩn hóa (normalize in-place) vì memmap mode 'r' là read-only
+    embeddings = np.array(embeddings_raw, dtype="float32")
+    
+    logger.info("Normalizing vectors for Inner Product (Cosine Similarity simulation)...")
     faiss.normalize_L2(embeddings)
-    logger.info("L2 normalisation applied.")
-
-    index = faiss.IndexFlatIP(EMBEDDING_DIM)
+    
+    logger.info(f"Building FAISS IndexFlatIP with dimension {dim}...")
+    index = faiss.IndexFlatIP(dim)
     index.add(embeddings)
-    logger.info(f"FAISS index built — {index.ntotal} vectors.")
-
-    ensure_dir(Path(index_output_path).parent)
+    
+    logger.info(f"Saving FAISS index to {index_output_path}")
     faiss.write_index(index, index_output_path)
-    logger.info(f"FAISS index saved: {index_output_path}")
-
+    
     return index
 
 
