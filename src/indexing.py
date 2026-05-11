@@ -313,7 +313,7 @@ def verify_bm25_index(bm25_dir: str, strategy: str) -> bool:
     bm25      = _load_bm25(pkl_path)
     chunk_ids = _load_chunk_ids(ids_path)
 
-    n_bm25 = len(bm25.corpus_size if hasattr(bm25, "corpus_size") else bm25.doc_freqs)
+    n_bm25 = bm25.corpus_size if hasattr(bm25, "corpus_size") else len(bm25.doc_freqs)
     # BM25Okapi exposes corpus length via idf dict length in worst case;
     # the safest proxy is the length of the tokenized corpus stored internally.
     n_corpus = bm25.corpus_size if hasattr(bm25, "corpus_size") else len(chunk_ids)
