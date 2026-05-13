@@ -118,8 +118,9 @@ def calculate_metrics(retrieved_chunk_ids: List[str], ground_truth_doc_id: str, 
         if hit:
             dcg += 1.0 / math.log2(i + 2) # i+2 because rank starts at 1, so log2(rank+1)
             
-    # IDCG is 1.0 because there is only 1 relevant document
-    idcg = 1.0
+    # Calculate exact IDCG based on the actual number of relevant chunks found
+    num_hits = sum(hits)
+    idcg = sum([1.0 / math.log2(i + 2) for i in range(num_hits)]) if num_hits > 0 else 1.0
     ndcg = dcg / idcg
     
     return {
