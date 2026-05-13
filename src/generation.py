@@ -1,7 +1,13 @@
 """
-generation.py — OpenRouter answer generation for Phase 7.
-Model: google/gemma-4-31b-it:free (from config.yaml).
-Implemented in Phase 5 and 7.
+generation.py — Answer generation module for Phase 5 (Synthetic QA) and Phase 7 (RAG pipeline).
+
+Model priority for Phase 7 (generate_answer):
+  1. Groq LPU  : llama-3.3-70b-versatile  (if GROQ_API_KEY is set)
+  2. OpenRouter: google/gemma-4-31b-it:free (fallback, from config.yaml)
+
+Model for Phase 5 (generate_synthetic_qa_batch):
+  1. Google AI Studio: gemini-3.1-flash-lite-preview (if GEMINI_API_KEY is set)
+  2. OpenRouter: google/gemma-4-31b-it:free (fallback)
 """
 
 from openai import OpenAI
@@ -15,26 +21,49 @@ from src.utils import get_env, load_config
 logger = logging.getLogger(__name__)
 config = load_config()
 
-# ── Prompt Template ────────────────────────────────────────────────────────────
-RAG_SYSTEM_PROMPT = """Bạn là một chuyên viên phân tích tài chính chuyên nghiệp. \
-Nhiệm vụ của bạn là trả lời câu hỏi của người dùng **dựa hoàn toàn** vào các đoạn ngữ cảnh được cung cấp bên dưới. \
-Hãy trả lời ngắn gọn, chính xác và bằng tiếng Việt. \
-Nếu thông tin trong các ngữ cảnh không đủ để trả lời, hãy nói rõ điều đó thay vì bịa đặt."""
+# ── System Prompt (Phase 7) ────────────────────────────────────────────────────
+# Three-component Vietnamese prompt architecture:
+#   [System Instruction] + [Retrieved Context] + [User Question]
+RAG_SYSTEM_PROMPT = """Bạn là một chuyên viên phân tích tài chính chuyên nghiệp.
+Nhiệm vụ của bạn là trả lời câu hỏi của người dùng **dựa hoàn toàn** vào các đoạn ngữ cảnh báo chí tài chính được cung cấp bên dưới.
+
+Quy tắc bắt buộc:
+1. Chỉ sử dụng thông tin từ ngữ cảnh được cung cấp. Không bịa đặt số liệu hoặc sự kiện.
+2. Nếu ngữ cảnh không đủ để trả lời, hãy nói rõ: "Thông tin trong ngữ cảnh không đủ để trả lời câu hỏi này."
+3. Trả lời ngắn gọn, chính xác bằng tiếng Việt (2–4 câu là đủ cho hầu hết câu hỏi).
+4. Nếu câu hỏi liên quan đến mã chứng khoán hoặc tổ chức (ví dụ: VIC, HPG, Vietcombank), hãy trích dẫn chính xác mã/tên đó trong câu trả lời.
+5. Khi trích dẫn số liệu tài chính (lãi suất, doanh thu, lợi nhuận,...), luôn đi kèm thời điểm nếu có trong ngữ cảnh."""
+
 
 def build_rag_prompt(query: str, contexts: List[str]) -> str:
-    """Build a RAG user prompt by injecting retrieved context chunks."""
-    context_block = "\n\n---\n\n".join(
-        [f"[Ngữ cảnh {i+1}]:\n{ctx}" for i, ctx in enumerate(contexts)]
+    """
+    Build the user-turn of the RAG prompt.
+
+    Combines numbered retrieved passages (Component 2) with the user
+    question (Component 3). The system prompt (Component 1) is passed
+    separately in the 'system' role.
+
+    Args:
+        query:    The user's question (Vietnamese).
+        contexts: Ordered list of retrieved chunk texts.
+
+    Returns:
+        Formatted user prompt string.
+    """
+    if not contexts:
+        context_block = "[Không có ngữ cảnh nào được truy xuất.]"
+    else:
+        context_block = "\n\n---\n\n".join(
+            [f"[Đoạn {i + 1}]:\n{ctx.strip()}" for i, ctx in enumerate(contexts) if ctx.strip()]
+        )
+    return (
+        f"Dưới đây là các đoạn thông tin được truy xuất từ kho dữ liệu báo chí tài chính Việt Nam:\n\n"
+        f"{context_block}\n\n"
+        f"---\n\n"
+        f"Câu hỏi: {query}\n\n"
+        f"Hãy trả lời câu hỏi dựa vào các đoạn ngữ cảnh trên. "
+        f"Nếu có mã chứng khoán hoặc tổ chức liên quan, hãy trích dẫn rõ trong câu trả lời."
     )
-    return f"""Dưới đây là các đoạn thông tin được truy xuất từ kho dữ liệu tài chính:
-
-{context_block}
-
----
-
-Câu hỏi: {query}
-
-Hãy trả lời câu hỏi dựa vào các ngữ cảnh trên."""
 
 
 def strip_markdown_json(text: str) -> str:
