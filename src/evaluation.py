@@ -230,6 +230,10 @@ def _call_groq_judge(prompt: str, max_retries: int = MAX_RETRIES) -> dict:
             logger.warning(f"[Judge] Raw output was: {raw_text!r}")
         except Exception as e:
             logger.warning(f"[Judge] API call failed (attempt {attempt + 1}): {e}")
+            err_str = str(e).lower()
+            if '429' in err_str or 'rate limit' in err_str or 'tokens per day' in err_str:
+                # Ép hệ thống ném thẳng lỗi này ra cho Notebook xử lý, không nuốt lỗi nữa
+                raise RuntimeError(f"FATAL RATE LIMIT: {e}")
 
         if attempt < max_retries:
             sleep_time = 2 ** attempt
