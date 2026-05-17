@@ -76,59 +76,72 @@ def strip_markdown_json(text: str) -> str:
     return text
 
 
-def generate_answer(query: str, contexts: List[str], max_retries: int = 2) -> str:
+def generate_answer(query: str, contexts: List[str], max_retries: int = 1) -> str:
     """
     Generate a RAG answer given a query and a list of retrieved context strings.
-    Prioritizes Groq if GROQ_API_KEY is available, otherwise falls back to OpenRouter.
-
-    Args:
-        query: The user's question.
-        contexts: List of retrieved text chunks to use as context.
-        max_retries: Number of retries on API failure.
-
-    Returns:
-        The generated answer as a string.
+    Implements a 3-layer Auto-Fallback architecture:
+      1. Groq (llama-3.3-70b-versatile)
+      2. OpenRouter (google/gemma-4-31b-it:free)
+      3. Gemini (gemini-3.1-flash-lite)
     """
-    groq_key = get_env('GROQ_API_KEY')
-    openrouter_key = get_env('OPENROUTER_API_KEY')
-    
-    if groq_key:
-        client = OpenAI(
-            base_url="https://api.groq.com/openai/v1",
-            api_key=groq_key
-        )
-        model_to_use = config['evaluation'].get('groq_model', 'llama-3.3-70b-versatile')
-    elif openrouter_key:
-        client = OpenAI(
-            base_url="https://openrouter.ai/api/v1",
-            api_key=openrouter_key
-        )
-        model_to_use = config['generation']['model']
-    else:
-        raise ValueError("Vui lòng set GROQ_API_KEY hoặc OPENROUTER_API_KEY")
+    keys = {
+        "groq": get_env('GROQ_API_KEY'),
+        "openrouter": get_env('OPENROUTER_API_KEY'),
+        "gemini": get_env('GEMINI_API_KEY')
+    }
+
+    backends = []
+    if keys["groq"]:
+        backends.append({
+            "name": "Groq",
+            "client": OpenAI(base_url="https://api.groq.com/openai/v1", api_key=keys["groq"]),
+            "model": config['evaluation'].get('groq_model', 'llama-3.3-70b-versatile')
+        })
+    if keys["openrouter"]:
+        backends.append({
+            "name": "OpenRouter",
+            "client": OpenAI(base_url="https://openrouter.ai/api/v1", api_key=keys["openrouter"]),
+            "model": config['generation'].get('model', 'google/gemma-4-31b-it:free')
+        })
+    if keys["gemini"]:
+        backends.append({
+            "name": "Gemini",
+            "client": OpenAI(base_url="https://generativelanguage.googleapis.com/v1beta/openai/", api_key=keys["gemini"]),
+            "model": "gemini-3.1-flash-lite"
+        })
+        
+    if not backends:
+        raise ValueError("Vui lòng set ít nhất một API KEY (GROQ, OPENROUTER, hoặc GEMINI).")
 
     user_prompt = build_rag_prompt(query, contexts)
 
-    for attempt in range(max_retries + 1):
-        try:
-            response = client.chat.completions.create(
-                model=model_to_use,
-                messages=[
-                    {"role": "system", "content": RAG_SYSTEM_PROMPT},
-                    {"role": "user", "content": user_prompt}
-                ],
-                temperature=config['generation']['temperature'],
-                max_tokens=config['generation']['max_tokens']
-            )
-            return response.choices[0].message.content.strip()
+    last_exception = None
+    for backend in backends:
+        logger.info(f"Đang xử lý qua {backend['name']} ({backend['model']})...")
+        for attempt in range(max_retries + 1):
+            try:
+                response = backend["client"].chat.completions.create(
+                    model=backend["model"],
+                    messages=[
+                        {"role": "system", "content": RAG_SYSTEM_PROMPT},
+                        {"role": "user", "content": user_prompt}
+                    ],
+                    temperature=config['generation'].get('temperature', 0.2),
+                    max_tokens=config['generation'].get('max_tokens', 1024)
+                )
+                return response.choices[0].message.content.strip()
 
-        except Exception as e:
-            logger.warning(f"API call failed on attempt {attempt + 1}: {e}")
-            if attempt == max_retries:
-                raise e
-            sleep_time = 2 ** attempt
-            logger.info(f"Retrying in {sleep_time} seconds...")
-            time.sleep(sleep_time)
+            except Exception as e:
+                last_exception = e
+                logger.warning(f"{backend['name']} thất bại (lần {attempt + 1}): {e}")
+                if attempt < max_retries:
+                    sleep_time = 2 ** attempt
+                    logger.info(f"Đang thử lại {backend['name']} sau {sleep_time}s...")
+                    time.sleep(sleep_time)
+        
+        logger.warning(f"FALLBACK: Không thể gọi {backend['name']}, chuyển sang backend tiếp theo...")
+
+    raise RuntimeError(f"Tất cả các backend đều sập. Lỗi cuối cùng: {last_exception}")
 
 
 def generate_synthetic_qa_batch(prompt: str, max_retries: int = 2) -> dict:

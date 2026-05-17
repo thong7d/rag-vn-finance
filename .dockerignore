@@ -1,0 +1,27 @@
+.git/
+.env
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+
+# Ignored large files and data dirs
+data/
+embeddings/
+synthetic_qa/
+evaluation/
+notebooks/
+
+# FAISS and BM25 will be mounted via Volume, ignore them in build
+indexes/
+bm25/
+
+*.zip
+*.parquet
+*.csv
+*.json
+*.md

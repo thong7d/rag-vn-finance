@@ -1,0 +1,25 @@
+version: '3.8'
+
+services:
+  rag-app:
+    build: .
+    container_name: rag_app_service
+    env_file:
+      - .env
+    volumes:
+      # Map thư mục chứa Vector Index từ local vào container
+      - ./indexes:/app/indexes
+      - ./bm25:/app/bm25
+    expose:
+      # Không map ra host (ports: "7860:7860") để đảm bảo tính riêng tư nội mạng Docker
+      - "7860"
+    restart: always
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: cloudflare_tunnel
+    # Khởi chạy Quick Tunnel (URL ngẫu nhiên)
+    command: tunnel --url http://rag-app:7860
+    depends_on:
+      - rag-app
+    restart: always
