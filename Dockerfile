@@ -14,10 +14,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Sao chép và cài đặt requirements
 COPY requirements.txt .
 
-# Ép cài đặt PyTorch phiên bản thuần CPU (~150MB) để tránh tải bản nặng 532MB
-RUN pip install torch --default-timeout=1000 --index-url https://download.pytorch.org/whl/cpu
-
-# Cài đặt các thư viện còn lại
+# Cài đặt các thư viện
 RUN pip install --default-timeout=1000 -r requirements.txt gradio fastapi uvicorn
 
 # Sao chép mã nguồn cốt lõi và file khởi chạy

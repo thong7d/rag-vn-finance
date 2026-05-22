@@ -8,8 +8,9 @@ import json
 import faiss
 import pandas as pd
 import gradio as gr
-import torch
-from sentence_transformers import SentenceTransformer
+import requests
+import numpy as np
+from tenacity import retry, stop_after_attempt, wait_fixed, retry_if_exception
 
 from src.utils import setup_logger
 from src.retrieval import DenseRetriever, SparseRetriever, HybridRetriever
@@ -29,10 +30,87 @@ BM25_DIR = os.environ.get("BM25_DIR", "bm25")
 
 logger.info("Khởi tạo hệ thống RAG...")
 
-# Load embedding model (~2.2GB RAM)
-device = "cuda" if torch.cuda.is_available() else "cpu"
-logger.info(f"Loading embedding model on {device}...")
-embedding_model = SentenceTransformer("intfloat/multilingual-e5-large", device=device)
+# ---------------------------------------------------------------------------
+# HF Embedding API integration
+# ---------------------------------------------------------------------------
+
+class HFAPIError(Exception):
+    def __init__(self, status_code, message):
+        self.status_code = status_code
+        super().__init__(f"HF API Error {status_code}: {message}")
+
+def is_retryable_exception(exception):
+    if isinstance(exception, HFAPIError):
+        return exception.status_code in [429, 503]
+    return False
+
+class HFEmbeddingAPI:
+    def __init__(self, model_id: str = "intfloat/multilingual-e5-large", token: str = None):
+        self.model_id = model_id
+        self.token = token or os.environ.get("HF_TOKEN", "")
+        self.api_url = f"https://api-inference.huggingface.co/pipeline/feature-extraction/{model_id}"
+        
+        if not self.token:
+            logger.warning("HF_TOKEN is not set in environment variables! API requests might be heavily rate-limited.")
+        else:
+            logger.info("HFEmbeddingAPI initialized with token successfully.")
+
+    def _call_api(self, payload):
+        headers = {}
+        if self.token:
+            headers["Authorization"] = f"Bearer {self.token}"
+            
+        response = requests.post(self.api_url, headers=headers, json=payload, timeout=30)
+        
+        if response.status_code != 200:
+            raise HFAPIError(response.status_code, response.text)
+            
+        return response.json()
+
+    @retry(
+        retry=retry_if_exception(is_retryable_exception),
+        wait=wait_fixed(8),  # Wait 8 seconds (between 5 and 10 seconds)
+        stop=stop_after_attempt(5),
+        reraise=True
+    )
+    def _call_api_with_retry(self, payload):
+        return self._call_api(payload)
+
+    def encode(self, texts, *args, **kwargs):
+        if isinstance(texts, str):
+            texts = [texts]
+            
+        prefixed_texts = []
+        for text in texts:
+            if not text.startswith("query: "):
+                prefixed_texts.append(f"query: {text}")
+            else:
+                prefixed_texts.append(text)
+                
+        payload = {"inputs": prefixed_texts}
+        
+        try:
+            logger.info(f"Sending {len(prefixed_texts)} texts to HF Inference API...")
+            response_json = self._call_api_with_retry(payload)
+        except Exception as e:
+            logger.error(f"HF Inference API call failed after retries: {e}")
+            raise e
+
+        if isinstance(response_json, dict) and "error" in response_json:
+            raise Exception(f"HF Inference API error: {response_json['error']}")
+
+        # Ensure correct type (float32 numpy array) và số chiều chính xác trước khi vào FAISS
+        emb_arr = np.array(response_json, dtype=np.float32)
+        if emb_arr.ndim == 1:
+            emb_arr = emb_arr.reshape(1, -1)
+        elif emb_arr.ndim == 3:
+            emb_arr = np.mean(emb_arr, axis=1)
+            
+        return emb_arr
+
+# Load embedding model via HF Inference API
+logger.info("Initializing Hugging Face Inference API for multilingual-e5-large...")
+embedding_model = HFEmbeddingAPI()
 
 # Load FAISS
 faiss_dir = os.path.join(INDEXES_DIR, STRATEGY)

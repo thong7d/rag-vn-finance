@@ -13,10 +13,10 @@ nltk==3.8.1
 sentence-splitter==1.4
 underthesea
 
-# Embeddings & ML
-# torch>=2.3.0  (Cứ để comment thế này là tốt nhất)
+# Embeddings & ML (Offloaded to HF Inference API)
 transformers>=4.42.4
-sentence-transformers>=3.0.1
+requests
+tenacity
 
 # Retrieval
 faiss-cpu==1.8.0
