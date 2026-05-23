@@ -12,51 +12,12 @@ import requests
 import numpy as np
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception
 from requests.exceptions import ConnectionError, Timeout
+from huggingface_hub import InferenceClient
 
 from src.utils import setup_logger
 from src.retrieval import DenseRetriever, SparseRetriever, HybridRetriever
 from src.indexing import load_bm25_index
 from src.generation import generate_answer
-
-import socket
-import requests
-
-# 1. Lưu giữ hàm phân giải hệ thống gốc
-_original_getaddrinfo = socket.getaddrinfo
-
-def resolve_hf_via_cloudflare_doh(hostname):
-    """
-    Truy vấn trực tiếp IP sạch của Cloudflare Edge cho các tên miền Hugging Face
-    Sử dụng IP thô 1.1.1.1 để bỏ qua hoàn toàn DNS nội bộ của cụm Cluster.
-    """
-    url = f"https://1.1.1.1/dns-query?name={hostname}&type=A"
-    headers = {"accept": "application/dns-json"}
-    try:
-        response = requests.get(url, headers=headers, timeout=2.0)
-        if response.status_code == 200:
-            data = response.json()
-            ips = [ans["data"] for ans in data.get("Answer", []) if ans["type"] == 1]
-            if ips:
-                return ips
-    except Exception:
-        pass
-    # Hạ cánh an toàn (Fallback) xuống dải IP Anycast kinh điển của Cloudflare dành cho Hugging Face
-    return ["104.18.22.39", "104.18.23.39"]
-
-def custom_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
-    # Đánh chặn cả hai tên miền core xử lý API của Hugging Face
-    if host in ["api-inference.huggingface.co", "api.huggingface.co"]:
-        resolved_ips = resolve_hf_via_cloudflare_doh(host)
-        for ip in resolved_ips:
-            try:
-                # Trả về kết quả phân giải dạng IP nhưng vẫn giữ nguyên thông tin Hostname gốc bảo toàn SSL
-                return _original_getaddrinfo(ip, port, family, type, proto, flags)
-            except Exception:
-                continue
-    return _original_getaddrinfo(host, port, family, type, proto, flags)
-
-# 2. Kích hoạt ghi đè nhân mạng của Python
-socket.getaddrinfo = custom_getaddrinfo
 
 logger = setup_logger("GradioApp")
 
@@ -94,39 +55,31 @@ class HFEmbeddingAPI:
     def __init__(self, model_id: str = "intfloat/multilingual-e5-large", token: str = None):
         self.model_id = model_id
         self.token = token or os.environ.get("HF_TOKEN", "")
-        self.api_url = f"https://api-inference.huggingface.co/pipeline/feature-extraction/{model_id}"
-        
-        self.session = requests.Session()
-        # Cấu hình pool kết nối để tái sử dụng socket nội bộ, giảm tần suất truy vấn DNS
-        adapter = requests.adapters.HTTPAdapter(
-            pool_connections=20,
-            pool_maxsize=20,
-            max_retries=0  # Để tầng tenacity kiểm soát hoàn toàn thời gian delay giữa các lần retry
-        )
-        self.session.mount("https://", adapter)
+        # Khởi tạo client chính thức của Hugging Face
+        self.client = InferenceClient(token=self.token)
         
         if not self.token:
             logger.warning("HF_TOKEN chưa được thiết lập!")
 
     def _call_api(self, payload):
-        headers = {"Content-Type": "application/json"}
-        if self.token:
-            headers["Authorization"] = f"Bearer {self.token}"
-            
-        # Hạ thấp timeout xuống 10s để nếu kẹt DNS sẽ ngắt và thực hiện retry lập tức
-        response = self.session.post(self.api_url, headers=headers, json=payload, timeout=10)
+        # Tách mảng văn bản đầu vào từ payload gốc
+        texts = payload["inputs"]
         
-        if response.status_code != 200:
-            raise HFAPIError(response.status_code, response.text)
-            
-        return response.json()
+        # InferenceClient tự động tối ưu định tuyến và retry nội bộ trong Cluster Space
+        response = self.client.feature_extraction(texts, model=self.model_id)
+        
+        # Chuyển đổi kết quả trả về thành list chuẩn để đồng bộ dữ liệu với hàm encode
+        if isinstance(response, np.ndarray):
+            return response.tolist()
+        return response
 
     @retry(
         retry=retry_if_exception(is_retryable_exception),
         wait=wait_exponential(multiplier=2, min=4, max=16),
         stop=stop_after_attempt(6),
         reraise=True
-    )  
+    )
+
     def _call_api_with_retry(self, payload):
         return self._call_api(payload)
     def _call_api(self, payload):
@@ -166,15 +119,14 @@ class HFEmbeddingAPI:
         payload = {"inputs": prefixed_texts}
         
         try:
-            logger.info(f"Sending {len(prefixed_texts)} texts to HF Inference API...")
+            logger.info(f"Sending {len(prefixed_texts)} texts to HF Inference API via Hub Client...")
             response_json = self._call_api_with_retry(payload)
         except Exception as e:
-            # Ngắt việc raise lỗi làm sập hệ thống, trả về None để báo hiệu kích hoạt tầng cứu hộ BM25
             logger.error(f"Kênh Embedding sập hoàn toàn sau tất cả các lượt thử lại: {e}")
             return None
 
         if isinstance(response_json, dict) and "error" in response_json:
-            logger.error(f"HF Inference API trả về lỗi cấu trúc: {response_json['error']}")
+            logger.error(f"HF Inference API error: {response_json['error']}")
             return None
 
         emb_arr = np.array(response_json, dtype=np.float32)
