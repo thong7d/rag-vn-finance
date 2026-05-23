@@ -26,8 +26,9 @@ data/processed/*.parquet
 data/processed/*.json
 data/chunks/
 embeddings/
-indexes/
-bm25/
+# indexes/ and bm25/ must be pushed to Hugging Face Spaces, so we don't ignore them here
+# indexes/
+# bm25/
 synthetic_qa/*.parquet
 synthetic_qa/*.jsonl
 synthetic_qa/*.json
@@ -72,8 +73,12 @@ desktop.ini
 *.safetensors
 *.ot
 
-# FAISS index files
-*.faiss
+# FAISS index files must be pushed to Hugging Face Spaces via Git LFS, so do not ignore *.faiss
+# *.faiss
+
+# Virtualization files ignored for clean repository
+Dockerfile
+docker-compose.yml
 
 # Logs
 *.log

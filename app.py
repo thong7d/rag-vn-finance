@@ -211,5 +211,5 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
 if __name__ == "__main__":
     # Queue requires concurrency_limit to prevent rate limits API 429
     demo.queue(default_concurrency_limit=1)
-    # Server configuration
-    demo.launch(server_name="0.0.0.0", server_port=7860)
+    # Server configuration for Hugging Face Spaces
+    demo.launch()
