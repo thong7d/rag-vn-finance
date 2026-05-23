@@ -5,35 +5,16 @@ Configured with default_concurrency_limit=1 to protect Auto-Fallback limits.
 
 import os
 import json
-import faiss
 import pandas as pd
 import gradio as gr
 import requests
 import numpy as np
-from tenacity import retry, stop_after_attempt, wait_fixed, retry_if_exception
-from requests.exceptions import ConnectionError, Timeout
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception
+# Nhập đầy đủ cây ngoại lệ của thư viện requests
+from requests.exceptions import RequestException, SSLError, ConnectionError, Timeout
 
 from src.utils import setup_logger
-from src.retrieval import DenseRetriever, SparseRetriever, HybridRetriever
-from src.indexing import load_bm25_index
-from src.generation import generate_answer
-
 logger = setup_logger("GradioApp")
-
-# ---------------------------------------------------------------------------
-# Global initialization
-# ---------------------------------------------------------------------------
-
-# Hardcoded best config for deployment to save RAM (Max ~6GB)
-STRATEGY = "fixed_size"
-INDEXES_DIR = os.environ.get("INDEXES_DIR", "indexes")
-BM25_DIR = os.environ.get("BM25_DIR", "bm25")
-
-logger.info("Khởi tạo hệ thống RAG...")
-
-# ---------------------------------------------------------------------------
-# HF Embedding API integration
-# ---------------------------------------------------------------------------
 
 class HFAPIError(Exception):
     def __init__(self, status_code, message):
@@ -41,13 +22,25 @@ class HFAPIError(Exception):
         super().__init__(f"HF API Error {status_code}: {message}")
 
 def is_retryable_exception(exception):
-    # Tự động bắt lỗi NameResolutionError/DNS drop (nằm trong ConnectionError) và Timeout để retry
-    if isinstance(exception, (ConnectionError, Timeout)):
-        logger.warning(f"Phát hiện lỗi mạng hoặc DNS tạm thời, đang kích hoạt hàm thử lại tự động: {exception}")
-        return True
-    # Bắt các lỗi overload phía server Hugging Face
+    """
+    Bộ lọc phân loại lỗi triệt để cho tầng Tenacity.
+    Trả về True nếu lỗi có khả năng phục hồi khi thử lại.
+    Trả về False nếu lỗi nghiêm trọng cần ngắt tiến trình để qua tầng Fallback.
+    """
+    # 1. Trường hợp lỗi bảo mật SSL (Hostname mismatch, Cert expired...)
+    if isinstance(exception, SSLError):
+        logger.error(f"[CRITICAL SSL] Lỗi chứng chỉ SSL hoặc lệch cổng định tuyến: {exception}. Ngắt truy cập HF.")
+        return False
+        
+    # 2. Trường hợp lỗi Overload từ phía máy chủ API Hugging Face
     if isinstance(exception, HFAPIError):
         return exception.status_code in [429, 503]
+        
+    # 3. Trường hợp rớt gói tin DNS (ConnectionError) hoặc nghẽn hàng đợi (Timeout)
+    if isinstance(exception, (ConnectionError, Timeout)):
+        logger.warning(f"[NETWORK WARNING] Lỗi kết nối hoặc phân giải DNS tạm thời: {type(exception).__name__}. Đang thử lại...")
+        return True
+        
     return False
 
 class HFEmbeddingAPI:
@@ -57,23 +50,18 @@ class HFEmbeddingAPI:
         self.api_url = f"https://api-inference.huggingface.co/pipeline/feature-extraction/{model_id}"
         
         self.session = requests.Session()
-        # Cấu hình pool kết nối để tái sử dụng socket nội bộ, giảm tần suất truy vấn DNS
         adapter = requests.adapters.HTTPAdapter(
             pool_connections=20,
             pool_maxsize=20,
-            max_retries=0  # Để tầng tenacity kiểm soát hoàn toàn thời gian delay giữa các lần retry
+            max_retries=0 
         )
         self.session.mount("https://", adapter)
-        
-        if not self.token:
-            logger.warning("HF_TOKEN chưa được thiết lập!")
 
     def _call_api(self, payload):
         headers = {"Content-Type": "application/json"}
         if self.token:
             headers["Authorization"] = f"Bearer {self.token}"
             
-        # Hạ thấp timeout xuống 10s để nếu kẹt DNS sẽ ngắt và thực hiện retry lập tức
         response = self.session.post(self.api_url, headers=headers, json=payload, timeout=10)
         
         if response.status_code != 200:
@@ -83,9 +71,8 @@ class HFEmbeddingAPI:
 
     @retry(
         retry=retry_if_exception(is_retryable_exception),
-        # Áp dụng cơ chế tịnh tiến lũy thừa (Exponential Backoff) để kéo giãn thời gian chờ nếu DNS nghẽn nặng
         wait=wait_exponential(multiplier=2, min=4, max=16),
-        stop=stop_after_attempt(6),
+        stop=stop_after_attempt(4),
         reraise=True
     )
     def _call_api_with_retry(self, payload):
@@ -95,26 +82,21 @@ class HFEmbeddingAPI:
         if isinstance(texts, str):
             texts = [texts]
             
-        prefixed_texts = []
-        for text in texts:
-            if not text.startswith("query: "):
-                prefixed_texts.append(f"query: {text}")
-            else:
-                prefixed_texts.append(text)
-                
+        prefixed_texts = [t if t.startswith("query: ") else f"query: {t}" for t in texts]
         payload = {"inputs": prefixed_texts}
         
         try:
-            logger.info(f"Sending {len(prefixed_texts)} texts to HF Inference API...")
+            # Tiến trình gọi API có quản lý cấu trúc retry
             response_json = self._call_api_with_retry(payload)
-        except Exception as e:
-            logger.error(f"HF Inference API call failed after retries: {e}")
-            raise e
+        except RequestException as network_error:
+            # BẮT TRIỆT ĐỂ: Mọi lỗi mạng phát sinh không thể cứu vãn sau cấu trúc retry
+            logger.error(f"[RAG FALLBACK ACTIVATED] Kênh Embedding HF sập hoàn toàn do: {network_error}")
+            # Ép buộc ném lỗi kiểm soát ra ngoài để hàm process_query kích hoạt tầng Fallback sang LLM độc lập
+            raise RuntimeError(f"Hệ thống Embedding tạm thời gián đoạn. {str(network_error)}")
 
         if isinstance(response_json, dict) and "error" in response_json:
             raise Exception(f"HF Inference API error: {response_json['error']}")
 
-        # Ensure correct type (float32 numpy array) và số chiều chính xác trước khi vào FAISS
         emb_arr = np.array(response_json, dtype=np.float32)
         if emb_arr.ndim == 1:
             emb_arr = emb_arr.reshape(1, -1)
