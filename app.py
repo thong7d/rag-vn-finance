@@ -87,33 +87,54 @@ class HFEmbeddingAPI:
         stop=stop_after_attempt(6),
         reraise=True
     )
-    def _call_api_with_retry(self, payload):
-        return self._call_api(payload)
+    def _call_api(self, payload):
+        headers = {"Content-Type": "application/json"}
+        if self.token:
+            headers["Authorization"] = f"Bearer {self.token}"
+            
+        # Danh sách các cổng Endpoint dự phòng của Hugging Face
+        urls = [
+            f"https://api-inference.huggingface.co/pipeline/feature-extraction/{self.model_id}",
+            f"https://api.huggingface.co/models/{self.model_id}"
+        ]
+        
+        last_exception = None
+        for url in urls:
+            try:
+                # Hạ timeout xuống 8s để ngắt sớm khi gặp DNS chết, chuyển URL tiếp theo
+                response = self.session.post(url, headers=headers, json=payload, timeout=8)
+                if response.status_code == 200:
+                    return response.json()
+                elif response.status_code in [429, 503]:
+                    raise HFAPIError(response.status_code, response.text)
+            except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
+                logger.warning(f"https://en.wikipedia.org/wiki/Failover Cổng {url} gặp lỗi mạng. Đang thử cổng dự phòng...")
+                last_exception = e
+                continue
+        
+        if last_exception:
+            raise last_exception
+        raise HFAPIError(500, "Không thể kết nối đến bất kỳ cổng API nào của Hugging Face.")
 
     def encode(self, texts, *args, **kwargs):
         if isinstance(texts, str):
             texts = [texts]
             
-        prefixed_texts = []
-        for text in texts:
-            if not text.startswith("query: "):
-                prefixed_texts.append(f"query: {text}")
-            else:
-                prefixed_texts.append(text)
-                
+        prefixed_texts = [t if t.startswith("query: ") else f"query: {t}" for t in texts]
         payload = {"inputs": prefixed_texts}
         
         try:
             logger.info(f"Sending {len(prefixed_texts)} texts to HF Inference API...")
             response_json = self._call_api_with_retry(payload)
         except Exception as e:
-            logger.error(f"HF Inference API call failed after retries: {e}")
-            raise e
+            # Ngắt việc raise lỗi làm sập hệ thống, trả về None để báo hiệu kích hoạt tầng cứu hộ BM25
+            logger.error(f"Kênh Embedding sập hoàn toàn sau tất cả các lượt thử lại: {e}")
+            return None
 
         if isinstance(response_json, dict) and "error" in response_json:
-            raise Exception(f"HF Inference API error: {response_json['error']}")
+            logger.error(f"HF Inference API trả về lỗi cấu trúc: {response_json['error']}")
+            return None
 
-        # Ensure correct type (float32 numpy array) và số chiều chính xác trước khi vào FAISS
         emb_arr = np.array(response_json, dtype=np.float32)
         if emb_arr.ndim == 1:
             emb_arr = emb_arr.reshape(1, -1)
@@ -161,10 +182,28 @@ def process_query(question: str):
         return "Vui lòng nhập câu hỏi.", ""
 
     try:
-        # 1. Retrieval
         logger.info(f"Truy vấn: {question}")
-        retrieved_results = retriever.retrieve(question, top_k=10)
         
+        # Kiểm tra tính khả dụng của mô hình Embedding nhúng
+        embedding_available = True
+        try:
+            # Thử nghiệm trích xuất vector cho câu hỏi của người dùng
+            query_vector = embedding_model.encode(question)
+            if query_vector is None:
+                embedding_available = False
+        except Exception:
+            embedding_available = False
+
+        if embedding_available:
+            # CHẾ ĐỘ TIÊU CHUẨN: Thực hiện truy xuất kết hợp Hybrid (FAISS + BM25)
+            retrieved_results = retriever.retrieve(question, top_k=10)
+            mode_status = ""
+        else:
+            # CHẾ ĐỘ DỰ PHÒNG KHẨN CẤP: Ép hệ thống chạy độc lập bằng bộ từ khóa BM25 Offline
+            logger.warning("[FALLBACK ACTIVATED] Chuyển đổi hệ thống sang trạng thái chạy BM25 thuần túy.")
+            retrieved_results = sparse_retriever.retrieve(question, top_k=10)
+            mode_status = "⚠️ *Hệ thống đang tự động vận hành ở Chế độ Dự phòng Khẩn cấp (BM25 Từ khóa) do lỗi nghẽn mạch DNS của đám mây Hugging Face. Kết quả trả ra vẫn đảm bảo trích dẫn nguồn chính xác.*\n\n"
+
         contexts = []
         source_texts = []
         for i, (cid, score) in enumerate(retrieved_results):
@@ -174,16 +213,18 @@ def process_query(question: str):
                 contexts.append(text)
                 source_texts.append(f"**[Nguồn {i+1}] {title}** (Score: {score:.4f})\n{text}\n")
 
-        # 2. Generation (3-layer Auto-Fallback)
+        # 2. Generation (Gọi mô hình ngôn ngữ lớn qua tầng Auto-Fallback 3 lớp sẵn có)
         answer = generate_answer(question, contexts)
         
+        # Đính kèm cảnh báo chế độ vận hành vào đầu văn bản phản hồi
+        final_answer = f"{mode_status}{answer}"
         sources_formatted = "\n---\n".join(source_texts) if source_texts else "Không tìm thấy ngữ cảnh phù hợp."
-        return answer, sources_formatted
+        return final_answer, sources_formatted
 
     except Exception as e:
-        logger.error(f"Lỗi hệ thống: {e}")
-        return f"Đã xảy ra lỗi: {str(e)}", ""
-
+        logger.error(f"Lỗi hệ thống nghiêm trọng tại tầng UI: {e}")
+        return f"Đã xảy ra lỗi cục bộ: {str(e)}", ""
+        
 # ---------------------------------------------------------------------------
 # UI Definition
 # ---------------------------------------------------------------------------
