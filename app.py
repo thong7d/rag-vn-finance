@@ -11,6 +11,7 @@ import gradio as gr
 import requests
 import numpy as np
 from tenacity import retry, stop_after_attempt, wait_fixed, retry_if_exception
+from requests.exceptions import ConnectionError, Timeout
 
 from src.utils import setup_logger
 from src.retrieval import DenseRetriever, SparseRetriever, HybridRetriever
@@ -30,64 +31,6 @@ BM25_DIR = os.environ.get("BM25_DIR", "bm25")
 
 logger.info("Khởi tạo hệ thống RAG...")
 
-import socket
-import requests
-import urllib3
-from tenacity import retry, stop_after_attempt, wait_fixed
-
-# Lưu trữ lại cấu trúc hàm getaddrinfo gốc của hệ thống
-_original_getaddrinfo = socket.getaddrinfo
-
-def fetch_ips_via_doh():
-    """
-    Truy vấn trực tiếp IP của Hugging Face thông qua Google DNS-over-HTTPS bằng IP thô.
-    Bỏ qua hoàn toàn tầng phân giải tên miền của hệ điều hành container.
-    """
-    doh_url = "https://8.8.8.8/resolve?name=api-inference.huggingface.co&type=A"
-    try:
-        # Gọi thẳng qua IP 8.8.8.8 nên không bao giờ dính lỗi NameResolution
-        response = requests.get(doh_url, timeout=2.0)
-        if response.status_code == 200:
-            data = response.json()
-            ips = [ans["data"] for ans in data.get("Answer", []) if ans["type"] == 1]
-            if ips:
-                return ips
-    except Exception:
-        pass
-    return []
-
-def patched_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
-    """
-    Hàm can thiệp hệ thống Socket toàn cục.
-    Chặn riêng tên miền api-inference.huggingface.co để ép định tuyến an toàn.
-    """
-    if host == "api-inference.huggingface.co":
-        # Bước 1: Thử nghiệm lấy IP sạch từ kênh DoH bảo mật
-        resolved_ips = fetch_ips_via_doh()
-        
-        # Bước 2: Nếu DoH thất bại, lập tức kích hoạt danh sách IP tĩnh dự phòng của AWS ALB Hugging Face
-        if not resolved_ips:
-            resolved_ips = [
-                "18.235.105.127",
-                "54.161.226.230",
-                "3.220.198.172",
-                "52.203.22.186"
-            ]
-            
-        # Tuần tự thử nghiệm kết nối qua các IP trong danh sách
-        for ip in resolved_ips:
-            try:
-                # Trả về cấu trúc mạng tiêu chuẩn cho requests thực thi kết nối SSL TLS SNI
-                return _original_getaddrinfo(ip, port, family, type, proto, flags)
-            except Exception:
-                continue
-                
-    # Đối với các tên miền khác (Groq, Gemini), giữ nguyên cơ chế mặc định
-    return _original_getaddrinfo(host, port, family, type, proto, flags)
-
-# Kích hoạt bản vá toàn cục vào nhân mạng của Python
-socket.getaddrinfo = patched_getaddrinfo
-
 # ---------------------------------------------------------------------------
 # HF Embedding API integration
 # ---------------------------------------------------------------------------
@@ -98,6 +41,11 @@ class HFAPIError(Exception):
         super().__init__(f"HF API Error {status_code}: {message}")
 
 def is_retryable_exception(exception):
+    # Tự động bắt lỗi NameResolutionError/DNS drop (nằm trong ConnectionError) và Timeout để retry
+    if isinstance(exception, (ConnectionError, Timeout)):
+        logger.warning(f"Phát hiện lỗi mạng hoặc DNS tạm thời, đang kích hoạt hàm thử lại tự động: {exception}")
+        return True
+    # Bắt các lỗi overload phía server Hugging Face
     if isinstance(exception, HFAPIError):
         return exception.status_code in [429, 503]
     return False
@@ -108,27 +56,25 @@ class HFEmbeddingAPI:
         self.token = token or os.environ.get("HF_TOKEN", "")
         self.api_url = f"https://api-inference.huggingface.co/pipeline/feature-extraction/{model_id}"
         
-        # Khởi tạo Session riêng biệt để tối ưu hóa việc tái sử dụng cổng kết nối (Connection Pooling)
         self.session = requests.Session()
+        # Cấu hình pool kết nối để tái sử dụng socket nội bộ, giảm tần suất truy vấn DNS
         adapter = requests.adapters.HTTPAdapter(
-            pool_connections=10, 
-            pool_maxsize=10, 
-            max_retries=0 # Để cơ chế tenacity kiểm soát hoàn toàn việc retry
+            pool_connections=20,
+            pool_maxsize=20,
+            max_retries=0  # Để tầng tenacity kiểm soát hoàn toàn thời gian delay giữa các lần retry
         )
         self.session.mount("https://", adapter)
         
         if not self.token:
             logger.warning("HF_TOKEN chưa được thiết lập!")
-        else:
-            logger.info("HFEmbeddingAPI đã sẵn sàng với kênh định tuyến an toàn.")
 
     def _call_api(self, payload):
         headers = {"Content-Type": "application/json"}
         if self.token:
             headers["Authorization"] = f"Bearer {self.token}"
             
-        # Thực hiện gọi qua đối tượng session đã được bảo vệ cấu trúc
-        response = self.session.post(self.api_url, headers=headers, json=payload, timeout=15)
+        # Hạ thấp timeout xuống 10s để nếu kẹt DNS sẽ ngắt và thực hiện retry lập tức
+        response = self.session.post(self.api_url, headers=headers, json=payload, timeout=10)
         
         if response.status_code != 200:
             raise HFAPIError(response.status_code, response.text)
@@ -137,8 +83,9 @@ class HFEmbeddingAPI:
 
     @retry(
         retry=retry_if_exception(is_retryable_exception),
-        wait=wait_fixed(8),  # Wait 8 seconds (between 5 and 10 seconds)
-        stop=stop_after_attempt(5),
+        # Áp dụng cơ chế tịnh tiến lũy thừa (Exponential Backoff) để kéo giãn thời gian chờ nếu DNS nghẽn nặng
+        wait=wait_exponential(multiplier=2, min=4, max=16),
+        stop=stop_after_attempt(6),
         reraise=True
     )
     def _call_api_with_retry(self, payload):
