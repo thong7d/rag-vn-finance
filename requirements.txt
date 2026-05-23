@@ -50,6 +50,7 @@
 # datasketch==1.6.4
 
 faiss-cpu==1.8.0
+rank-bm25==0.2.2
 pandas==2.2.2
 pyarrow
 fastapi==0.110.3
