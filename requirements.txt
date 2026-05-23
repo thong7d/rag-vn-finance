@@ -57,7 +57,7 @@ starlette==0.37.2
 uvicorn==0.29.0
 jinja2==3.1.4
 tenacity
-numpy
+numpy==1.26.4
 requests
 google-generativeai
 groq
