@@ -86,7 +86,9 @@ class HFEmbeddingAPI:
         wait=wait_exponential(multiplier=2, min=4, max=16),
         stop=stop_after_attempt(6),
         reraise=True
-    )
+    )  
+    def _call_api_with_retry(self, payload):
+        return self._call_api(payload)
     def _call_api(self, payload):
         headers = {"Content-Type": "application/json"}
         if self.token:
@@ -224,7 +226,7 @@ def process_query(question: str):
     except Exception as e:
         logger.error(f"Lỗi hệ thống nghiêm trọng tại tầng UI: {e}")
         return f"Đã xảy ra lỗi cục bộ: {str(e)}", ""
-        
+
 # ---------------------------------------------------------------------------
 # UI Definition
 # ---------------------------------------------------------------------------
