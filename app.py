@@ -10,7 +10,7 @@ import pandas as pd
 import gradio as gr
 import requests
 import numpy as np
-from tenacity import retry, stop_after_attempt, wait_fixed, retry_if_exception
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception
 from requests.exceptions import ConnectionError, Timeout
 
 from src.utils import setup_logger
@@ -83,11 +83,10 @@ class HFEmbeddingAPI:
 
     @retry(
         retry=retry_if_exception(is_retryable_exception),
-        # Áp dụng cơ chế tịnh tiến lũy thừa (Exponential Backoff) để kéo giãn thời gian chờ nếu DNS nghẽn nặng
         wait=wait_exponential(multiplier=2, min=4, max=16),
         stop=stop_after_attempt(6),
         reraise=True
-    )   
+    )
     def _call_api_with_retry(self, payload):
         return self._call_api(payload)
 
