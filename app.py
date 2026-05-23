@@ -209,7 +209,8 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    # Queue requires concurrency_limit to prevent rate limits API 429
+    # Giữ nguyên cấu hình queue bảo vệ rate limit
     demo.queue(default_concurrency_limit=1)
-    # Server configuration for Hugging Face Spaces
-    demo.launch()
+    
+    # Ép buộc bind đúng cổng hạ tầng của HF Spaces mong muốn
+    demo.launch(server_name="0.0.0.0", server_port=7860)
