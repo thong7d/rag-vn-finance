@@ -18,6 +18,46 @@ from src.retrieval import DenseRetriever, SparseRetriever, HybridRetriever
 from src.indexing import load_bm25_index
 from src.generation import generate_answer
 
+import socket
+import requests
+
+# 1. Lưu giữ hàm phân giải hệ thống gốc
+_original_getaddrinfo = socket.getaddrinfo
+
+def resolve_hf_via_cloudflare_doh(hostname):
+    """
+    Truy vấn trực tiếp IP sạch của Cloudflare Edge cho các tên miền Hugging Face
+    Sử dụng IP thô 1.1.1.1 để bỏ qua hoàn toàn DNS nội bộ của cụm Cluster.
+    """
+    url = f"https://1.1.1.1/dns-query?name={hostname}&type=A"
+    headers = {"accept": "application/dns-json"}
+    try:
+        response = requests.get(url, headers=headers, timeout=2.0)
+        if response.status_code == 200:
+            data = response.json()
+            ips = [ans["data"] for ans in data.get("Answer", []) if ans["type"] == 1]
+            if ips:
+                return ips
+    except Exception:
+        pass
+    # Hạ cánh an toàn (Fallback) xuống dải IP Anycast kinh điển của Cloudflare dành cho Hugging Face
+    return ["104.18.22.39", "104.18.23.39"]
+
+def custom_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
+    # Đánh chặn cả hai tên miền core xử lý API của Hugging Face
+    if host in ["api-inference.huggingface.co", "api.huggingface.co"]:
+        resolved_ips = resolve_hf_via_cloudflare_doh(host)
+        for ip in resolved_ips:
+            try:
+                # Trả về kết quả phân giải dạng IP nhưng vẫn giữ nguyên thông tin Hostname gốc bảo toàn SSL
+                return _original_getaddrinfo(ip, port, family, type, proto, flags)
+            except Exception:
+                continue
+    return _original_getaddrinfo(host, port, family, type, proto, flags)
+
+# 2. Kích hoạt ghi đè nhân mạng của Python
+socket.getaddrinfo = custom_getaddrinfo
+
 logger = setup_logger("GradioApp")
 
 # ---------------------------------------------------------------------------
