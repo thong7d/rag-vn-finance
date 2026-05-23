@@ -1,0 +1,10 @@
+# Git LFS configuration for Vietnamese Financial News RAG System
+# Tracking large index files to prevent push failures on Hugging Face Spaces
+
+*.faiss filter=lfs diff=lfs merge=lfs -text
+*.parquet filter=lfs diff=lfs merge=lfs -text
+
+# Specific LFS tracking for index data directories
+indexes/**/*.json filter=lfs diff=lfs merge=lfs -text
+bm25/**/*.json filter=lfs diff=lfs merge=lfs -text
+bm25/**/*.pkl filter=lfs diff=lfs merge=lfs -text
