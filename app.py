@@ -79,37 +79,8 @@ class HFEmbeddingAPI:
         stop=stop_after_attempt(6),
         reraise=True
     )
-
     def _call_api_with_retry(self, payload):
         return self._call_api(payload)
-    def _call_api(self, payload):
-        headers = {"Content-Type": "application/json"}
-        if self.token:
-            headers["Authorization"] = f"Bearer {self.token}"
-            
-        # Danh sách các cổng Endpoint dự phòng của Hugging Face
-        urls = [
-            f"https://api-inference.huggingface.co/pipeline/feature-extraction/{self.model_id}",
-            f"https://api.huggingface.co/models/{self.model_id}"
-        ]
-        
-        last_exception = None
-        for url in urls:
-            try:
-                # Hạ timeout xuống 8s để ngắt sớm khi gặp DNS chết, chuyển URL tiếp theo
-                response = self.session.post(url, headers=headers, json=payload, timeout=8)
-                if response.status_code == 200:
-                    return response.json()
-                elif response.status_code in [429, 503]:
-                    raise HFAPIError(response.status_code, response.text)
-            except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
-                logger.warning(f"https://en.wikipedia.org/wiki/Failover Cổng {url} gặp lỗi mạng. Đang thử cổng dự phòng...")
-                last_exception = e
-                continue
-        
-        if last_exception:
-            raise last_exception
-        raise HFAPIError(500, "Không thể kết nối đến bất kỳ cổng API nào của Hugging Face.")
 
     def encode(self, texts, *args, **kwargs):
         if isinstance(texts, str):
