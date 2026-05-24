@@ -2,24 +2,6 @@
 app.py — Gradio UI for Vietnamese Financial News RAG System (Phase 9)
 Configured with default_concurrency_limit=1 to protect Auto-Fallback limits.
 """
-import urllib3.util.connection as urllib3_connection
-
-# Lưu trữ lại hàm khởi tạo kết nối TCP gốc của thư viện urllib3
-_original_create_connection = urllib3_connection.create_connection
-
-def patched_create_connection(address, *args, **kwargs):
-    """
-    Đánh chặn tiến trình mở socket TCP của urllib3.
-    Ép buộc chuyển hướng IP đối với các tên miền của Hugging Face để bỏ qua DNS.
-    """
-    host, port = address
-    if host in ["api-inference.huggingface.co", "api.huggingface.co"]:
-        # Sử dụng dải IP định tuyến Anycast sạch của Cloudflare phục vụ Hugging Face Backend
-        return _original_create_connection(("104.18.22.39", port), *args, **kwargs)
-    return _original_create_connection(address, *args, **kwargs)
-
-# Kích hoạt bản vá tầng liên kết dữ liệu toàn cục
-urllib3_connection.create_connection = patched_create_connection
 
 import os
 import json
@@ -54,68 +36,26 @@ logger.info("Khởi tạo hệ thống RAG...")
 # HF Embedding API integration
 # ---------------------------------------------------------------------------
 
-class HFAPIError(Exception):
-    def __init__(self, status_code, message):
-        self.status_code = status_code
-        super().__init__(f"HF API Error {status_code}: {message}")
+from sentence_transformers import SentenceTransformer
 
-def is_retryable_exception(exception):
-    # Tự động bắt lỗi NameResolutionError/DNS drop (nằm trong ConnectionError) và Timeout để retry
-    if isinstance(exception, (ConnectionError, Timeout)):
-        logger.warning(f"Phát hiện lỗi mạng hoặc DNS tạm thời, đang kích hoạt hàm thử lại tự động: {exception}")
-        return True
-    # Bắt các lỗi overload phía server Hugging Face
-    if isinstance(exception, HFAPIError):
-        return exception.status_code in [429, 503]
-    return False
-
-class HFEmbeddingAPI:
-    def __init__(self, model_id: str = "intfloat/multilingual-e5-large", token: str = None):
-        self.model_id = model_id
-        self.token = token or os.environ.get("HF_TOKEN", "")
-        # Khởi tạo client chính thức của Hugging Face
-        self.client = InferenceClient(token=self.token)
-        
-        if not self.token:
-            logger.warning("HF_TOKEN chưa được thiết lập!")
-
-    def _call_api(self, payload):
-        texts = payload["inputs"]
-        # Gọi trực tiếp qua client, urllib3 sẽ tự động điều tuyến qua IP tĩnh an toàn
-        response = self.client.feature_extraction(texts, model=self.model_id)
-        if isinstance(response, np.ndarray):
-            return response.tolist()
-        return response
-
-    @retry(
-        retry=retry_if_exception(is_retryable_exception),
-        wait=wait_exponential(multiplier=2, min=4, max=16),
-        stop=stop_after_attempt(6),
-        reraise=True
-    )
-    def _call_api_with_retry(self, payload):
-        return self._call_api(payload)
+class LocalEmbeddingAPI:
+    def __init__(self, model_id: str = "intfloat/multilingual-e5-large"):
+        # Tải trực tiếp mô hình vào RAM của Space, chạy offline 100% không qua Internet
+        self.model = SentenceTransformer(model_id)
+        logger.info("LocalEmbeddingAPI: Hệ thống đã nạp mô hình E5 Large chạy Offline thành công.")
 
     def encode(self, texts, *args, **kwargs):
         if isinstance(texts, str):
             texts = [texts]
             
+        # Chuẩn hóa tiền tố quy định của dòng mô hình E5
         prefixed_texts = [t if t.startswith("query: ") else f"query: {t}" for t in texts]
-        payload = {"inputs": prefixed_texts}
         
-        # Cho phép ném ngoại lệ chuẩn nếu có lỗi từ phía server (429/503), không nuốt lỗi mạng
-        response_json = self._call_api_with_retry(payload)
-        
-        if isinstance(response_json, dict) and "error" in response_json:
-            raise RuntimeError(f"HF Inference API error: {response_json['error']}")
+        # Thực thi tính toán vector trực tiếp bằng CPU của Space
+        return self.model.encode(prefixed_texts, convert_to_numpy=True, dtype=np.float32)
 
-        emb_arr = np.array(response_json, dtype=np.float32)
-        if emb_arr.ndim == 1:
-            emb_arr = emb_arr.reshape(1, -1)
-        elif emb_arr.ndim == 3:
-            emb_arr = np.mean(emb_arr, axis=1)
-            
-        return emb_arr
+# Khởi tạo mô hình offline thay thế cho API Client cũ
+embedding_model = LocalEmbeddingAPI()
 
 # Load embedding model via HF Inference API
 logger.info("Initializing Hugging Face Inference API for multilingual-e5-large...")
