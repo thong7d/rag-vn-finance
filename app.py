@@ -129,25 +129,16 @@ def process_query(question: str):
     try:
         logger.info(f"Truy vấn: {question}")
         
-        # Kiểm tra tính khả dụng của mô hình Embedding nhúng
-        embedding_available = True
         try:
-            # Thử nghiệm trích xuất vector cho câu hỏi của người dùng
-            query_vector = embedding_model.encode(question)
-            if query_vector is None:
-                embedding_available = False
-        except Exception:
-            embedding_available = False
-
-        if embedding_available:
-            # CHẾ ĐỘ TIÊU CHUẨN: Thực hiện truy xuất kết hợp Hybrid (FAISS + BM25)
+            # CHẾ ĐỘ TIÊU CHUẨN: Gọi thẳng bộ truy xuất Hybrid (FAISS + BM25)
+            # Luồng xử lý này chỉ gọi OpenRouter API đúng 1 lần duy nhất để lấy Vector
             retrieved_results = retriever.retrieve(question, top_k=10)
             mode_status = ""
-        else:
-            # CHẾ ĐỘ DỰ PHÒNG KHẨN CẤP: Ép hệ thống chạy độc lập bằng bộ từ khóa BM25 Offline
-            logger.warning("[FALLBACK ACTIVATED] Chuyển đổi hệ thống sang trạng thái chạy BM25 thuần túy.")
+        except Exception as net_err:
+            # CHẾ ĐỘ DỰ PHÒNG KHẨN CẤP: Tự động kích hoạt khi OpenRouter sập hoặc trả về None gây lỗi FAISS
+            logger.warning(f"[FALLBACK ACTIVATED] Kênh Dense gặp sự cố ({net_err}). Hạ cấp sang BM25 Offline.")
             retrieved_results = sparse_retriever.retrieve(question, top_k=10)
-            mode_status = "⚠️ *Hệ thống đang tự động vận hành ở Chế độ Dự phòng Khẩn cấp (BM25 Từ khóa) do lỗi nghẽn mạch DNS của đám mây Hugging Face. Kết quả trả ra vẫn đảm bảo trích dẫn nguồn chính xác.*\n\n"
+            mode_status = "⚠️ *Hệ thống đang tự động vận hành ở Chế độ Dự phòng Khẩn cấp (BM25 Từ khóa) do lỗi nghẽn mạch API của đám mây OpenRouter. Kết quả trả ra vẫn đảm bảo trích dẫn nguồn chính xác.*\n\n"
 
         contexts = []
         source_texts = []
@@ -161,7 +152,6 @@ def process_query(question: str):
         # 2. Generation (Gọi mô hình ngôn ngữ lớn qua tầng Auto-Fallback 3 lớp sẵn có)
         answer = generate_answer(question, contexts)
         
-        # Đính kèm cảnh báo chế độ vận hành vào đầu văn bản phản hồi
         final_answer = f"{mode_status}{answer}"
         sources_formatted = "\n---\n".join(source_texts) if source_texts else "Không tìm thấy ngữ cảnh phù hợp."
         return final_answer, sources_formatted
@@ -182,7 +172,7 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
         with gr.Column(scale=2):
             question_input = gr.Textbox(
                 label="Câu hỏi của bạn", 
-                placeholder="Ví dụ: Lợi nhuận của Vietcombank quý 3 năm 2023 là bao nhiêu?",
+                placeholder="Ví dụ: Lợi nhuận của Vietcombank quý 1 năm 2022 là bao nhiêu?",
                 lines=3
             )
             submit_btn = gr.Button("Gửi câu hỏi", variant="primary")
