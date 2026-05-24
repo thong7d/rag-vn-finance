@@ -36,10 +36,11 @@ logger.info("Khởi tạo hệ thống RAG...")
 # HF Embedding API integration (OpenRouter Cloud Provider)
 # ---------------------------------------------------------------------------
 
+import time  # Thêm import thư viện time ở đầu tệp nếu chưa có
+
 class OpenRouterEmbeddingAPI:
     def __init__(self):
         self.api_url = "https://openrouter.ai/api/v1/embeddings"
-        # Tự động nạp Token bảo mật từ biến môi trường của Space
         self.api_key = os.environ.get("OPENROUTER_API_KEY", "")
         self.model_name = "intfloat/multilingual-e5-large"
         
@@ -50,7 +51,6 @@ class OpenRouterEmbeddingAPI:
         if isinstance(texts, str):
             texts = [texts]
             
-        # Chuẩn hóa tiền tố quy định bắt buộc của dòng mô hình E5
         prefixed_texts = [t if t.startswith("query: ") else f"query: {t}" for t in texts]
         
         headers = {
@@ -58,24 +58,35 @@ class OpenRouterEmbeddingAPI:
             "Content-Type": "application/json"
         }
         
-        # Cấu trúc dữ liệu Payload theo chuẩn API mã hóa của OpenRouter / OpenAI
         payload = {
             "model": self.model_name,
             "input": prefixed_texts
         }
         
+        # Bắt đầu đo hiệu năng thời gian thực
+        start_time = time.time()
+        logger.info(f"[OPENROUTER] Đang gửi yêu cầu nhúng {len(prefixed_texts)} văn bản sang model '{self.model_name}'...")
+        
         try:
             response = requests.post(self.api_url, headers=headers, json=payload, timeout=15)
+            latency = time.time() - start_time # Tính toán tổng thời gian phản hồi mạng
+            
             if response.status_code == 200:
                 data = response.json()["data"]
-                # Trích xuất danh sách các vector số thực trả về từ Cloud
                 embeddings = [item["embedding"] for item in data]
-                return np.array(embeddings, dtype=np.float32)
+                emb_array = np.array(embeddings, dtype=np.float32)
+                
+                # IN LOG CHI TIẾT ĐỂ XÁC THỰC THÀNH CÔNG
+                logger.info(
+                    f"[SUCCESS] Gọi thành công OpenRouter API | Model: {self.model_name} | "
+                    f"Thời gian phản hồi: {latency:.2f}s | Kích thước Vector trả về: {emb_array.shape}"
+                )
+                return emb_array
             else:
-                logger.error(f"OpenRouter API thất bại: {response.status_code} - {response.text}")
+                logger.error(f"[API ERROR] OpenRouter trả về lỗi: {response.status_code} - {response.text}")
                 return None
         except Exception as e:
-            logger.error(f"Không thể kết nối đến máy chủ OpenRouter: {e}")
+            logger.error(f"[NETWORK ERROR] Không thể kết nối đến OpenRouter Endpoint: {e}")
             return None
 
 # Kích hoạt thực thể kết nối API trực tiếp
