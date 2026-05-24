@@ -2,6 +2,24 @@
 app.py — Gradio UI for Vietnamese Financial News RAG System (Phase 9)
 Configured with default_concurrency_limit=1 to protect Auto-Fallback limits.
 """
+import urllib3.util.connection as urllib3_connection
+
+# Lưu trữ lại hàm khởi tạo kết nối TCP gốc của thư viện urllib3
+_original_create_connection = urllib3_connection.create_connection
+
+def patched_create_connection(address, *args, **kwargs):
+    """
+    Đánh chặn tiến trình mở socket TCP của urllib3.
+    Ép buộc chuyển hướng IP đối với các tên miền của Hugging Face để bỏ qua DNS.
+    """
+    host, port = address
+    if host in ["api-inference.huggingface.co", "api.huggingface.co"]:
+        # Sử dụng dải IP định tuyến Anycast sạch của Cloudflare phục vụ Hugging Face Backend
+        return _original_create_connection(("104.18.22.39", port), *args, **kwargs)
+    return _original_create_connection(address, *args, **kwargs)
+
+# Kích hoạt bản vá tầng liên kết dữ liệu toàn cục
+urllib3_connection.create_connection = patched_create_connection
 
 import os
 import json
@@ -62,13 +80,9 @@ class HFEmbeddingAPI:
             logger.warning("HF_TOKEN chưa được thiết lập!")
 
     def _call_api(self, payload):
-        # Tách mảng văn bản đầu vào từ payload gốc
         texts = payload["inputs"]
-        
-        # InferenceClient tự động tối ưu định tuyến và retry nội bộ trong Cluster Space
+        # Gọi trực tiếp qua client, urllib3 sẽ tự động điều tuyến qua IP tĩnh an toàn
         response = self.client.feature_extraction(texts, model=self.model_id)
-        
-        # Chuyển đổi kết quả trả về thành list chuẩn để đồng bộ dữ liệu với hàm encode
         if isinstance(response, np.ndarray):
             return response.tolist()
         return response
@@ -89,16 +103,11 @@ class HFEmbeddingAPI:
         prefixed_texts = [t if t.startswith("query: ") else f"query: {t}" for t in texts]
         payload = {"inputs": prefixed_texts}
         
-        try:
-            logger.info(f"Sending {len(prefixed_texts)} texts to HF Inference API via Hub Client...")
-            response_json = self._call_api_with_retry(payload)
-        except Exception as e:
-            logger.error(f"Kênh Embedding sập hoàn toàn sau tất cả các lượt thử lại: {e}")
-            return None
-
+        # Cho phép ném ngoại lệ chuẩn nếu có lỗi từ phía server (429/503), không nuốt lỗi mạng
+        response_json = self._call_api_with_retry(payload)
+        
         if isinstance(response_json, dict) and "error" in response_json:
-            logger.error(f"HF Inference API error: {response_json['error']}")
-            return None
+            raise RuntimeError(f"HF Inference API error: {response_json['error']}")
 
         emb_arr = np.array(response_json, dtype=np.float32)
         if emb_arr.ndim == 1:
