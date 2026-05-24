@@ -33,29 +33,53 @@ BM25_DIR = os.environ.get("BM25_DIR", "bm25")
 logger.info("Khởi tạo hệ thống RAG...")
 
 # ---------------------------------------------------------------------------
-# HF Embedding API integration
+# HF Embedding API integration (OpenRouter Cloud Provider)
 # ---------------------------------------------------------------------------
 
-from sentence_transformers import SentenceTransformer
-
-class LocalEmbeddingAPI:
-    def __init__(self, model_id: str = "intfloat/multilingual-e5-large"):
-        # Tải trực tiếp mô hình vào RAM của Space, chạy offline 100% không qua Internet
-        self.model = SentenceTransformer(model_id)
-        logger.info("LocalEmbeddingAPI: Hệ thống đã nạp mô hình E5 Large chạy Offline thành công.")
+class OpenRouterEmbeddingAPI:
+    def __init__(self):
+        self.api_url = "https://openrouter.ai/api/v1/embeddings"
+        # Tự động nạp Token bảo mật từ biến môi trường của Space
+        self.api_key = os.environ.get("OPENROUTER_API_KEY", "")
+        self.model_name = "intfloat/multilingual-e5-large"
+        
+        if not self.api_key:
+            logger.warning("OPENROUTER_API_KEY chưa được thiết lập trong Settings!")
 
     def encode(self, texts, *args, **kwargs):
         if isinstance(texts, str):
             texts = [texts]
             
-        # Chuẩn hóa tiền tố quy định của dòng mô hình E5
+        # Chuẩn hóa tiền tố quy định bắt buộc của dòng mô hình E5
         prefixed_texts = [t if t.startswith("query: ") else f"query: {t}" for t in texts]
         
-        # Thực thi tính toán vector trực tiếp bằng CPU của Space
-        return self.model.encode(prefixed_texts, convert_to_numpy=True, dtype=np.float32)
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json"
+        }
+        
+        # Cấu trúc dữ liệu Payload theo chuẩn API mã hóa của OpenRouter / OpenAI
+        payload = {
+            "model": self.model_name,
+            "input": prefixed_texts
+        }
+        
+        try:
+            response = requests.post(self.api_url, headers=headers, json=payload, timeout=15)
+            if response.status_code == 200:
+                data = response.json()["data"]
+                # Trích xuất danh sách các vector số thực trả về từ Cloud
+                embeddings = [item["embedding"] for item in data]
+                return np.array(embeddings, dtype=np.float32)
+            else:
+                logger.error(f"OpenRouter API thất bại: {response.status_code} - {response.text}")
+                return None
+        except Exception as e:
+            logger.error(f"Không thể kết nối đến máy chủ OpenRouter: {e}")
+            return None
 
-# Khởi tạo mô hình offline thay thế cho API Client cũ
-embedding_model = LocalEmbeddingAPI()
+# Kích hoạt thực thể kết nối API trực tiếp
+embedding_model = OpenRouterEmbeddingAPI()
 
 # Load FAISS
 faiss_dir = os.path.join(INDEXES_DIR, STRATEGY)

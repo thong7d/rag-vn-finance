@@ -64,6 +64,3 @@ google-generativeai
 groq
 openai
 huggingface_hub<=0.25.2
---extra-index-url https://download.pytorch.org/whl/cpu
-torch
-sentence-transformers==3.0.1
