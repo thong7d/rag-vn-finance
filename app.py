@@ -57,10 +57,6 @@ class LocalEmbeddingAPI:
 # Khởi tạo mô hình offline thay thế cho API Client cũ
 embedding_model = LocalEmbeddingAPI()
 
-# Load embedding model via HF Inference API
-logger.info("Initializing Hugging Face Inference API for multilingual-e5-large...")
-embedding_model = HFEmbeddingAPI()
-
 # Load FAISS
 faiss_dir = os.path.join(INDEXES_DIR, STRATEGY)
 logger.info(f"Loading FAISS từ {faiss_dir}...")
