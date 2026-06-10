@@ -1,6 +1,9 @@
 """
 app.py — Gradio UI for Vietnamese Financial News RAG System (Phase 9)
 Configured with default_concurrency_limit=1 to protect Auto-Fallback limits.
+Phase 9 enhancements:
+  - URL trích dẫn trong Retrieved Context để người dùng kiểm chứng.
+  - Cohere Reranker (rerank-v3.0) để lọc top-5 ngữ cảnh chất lượng cao cho LLM.
 """
 
 import os
@@ -10,9 +13,11 @@ import pandas as pd
 import gradio as gr
 import requests
 import numpy as np
+import time
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception
 from requests.exceptions import ConnectionError, Timeout
 from huggingface_hub import InferenceClient
+import cohere
 
 from src.utils import setup_logger
 from src.retrieval import DenseRetriever, SparseRetriever, HybridRetriever
@@ -106,6 +111,11 @@ with open(os.path.join(faiss_dir, 'chunk_ids.json'), 'r', encoding='utf-8') as f
 df_meta = pd.read_parquet(os.path.join(faiss_dir, 'metadata.parquet'))
 chunk_text_map = dict(zip(df_meta['chunk_id'], df_meta['text']))
 chunk_title_map = dict(zip(df_meta['chunk_id'], df_meta.get('title', pd.Series(dtype=str))))
+# URL map — khai báo an toàn để đề phòng lệch tên cột (url / link / source)
+chunk_url_map = dict(zip(
+    df_meta['chunk_id'],
+    df_meta.get('url', df_meta.get('link', pd.Series("Không có liên kết", index=df_meta.index)))
+))
 
 dense_retriever = DenseRetriever(faiss_index, dense_chunk_ids, embedding_model)
 
@@ -119,6 +129,53 @@ retriever = HybridRetriever(dense_retriever, sparse_retriever, rrf_k=60)
 logger.info("Hệ thống RAG đã khởi tạo thành công!")
 
 # ---------------------------------------------------------------------------
+# Cohere Reranker — lọc top-5 từ tập ứng viên thô 30 kết quả
+# ---------------------------------------------------------------------------
+
+def rerank_with_cohere(query: str, candidates: list) -> list:
+    """
+    Nhận danh sách (chunk_id, score) thô từ Hybrid Retriever,
+    gọi Cohere Rerank API để tái xếp hạng ngữ nghĩa sâu,
+    và trả về top-5 kết quả dạng [(chunk_id, rerank_score), ...].
+
+    Nếu COHERE_API_KEY chưa được thiết lập hoặc API lỗi,
+    tự động fallback về top-5 kết quả thô ban đầu.
+    """
+    cohere_key = os.environ.get("COHERE_API_KEY", "")
+    if not cohere_key:
+        logger.warning("[Reranker] COHERE_API_KEY chưa được thiết lập, bỏ qua bước Rerank.")
+        return candidates[:5]
+
+    # Chuẩn bị danh sách văn bản ứng viên để gửi cho Cohere
+    docs = [chunk_text_map.get(cid, "") for cid, _ in candidates]
+    # Lọc bỏ chuỗi rỗng để tránh lỗi API
+    valid_pairs = [(cid_score, doc) for cid_score, doc in zip(candidates, docs) if doc.strip()]
+    if not valid_pairs:
+        return candidates[:5]
+
+    valid_candidates, valid_docs = zip(*valid_pairs)
+
+    try:
+        co = cohere.Client(api_key=cohere_key)
+        response = co.rerank(
+            model="rerank-multilingual-v3.0",
+            query=query,
+            documents=list(valid_docs),
+            top_n=5,
+        )
+        # Ánh xạ ngược kết quả Cohere về cấu trúc [(chunk_id, score), ...]
+        reranked = [
+            (valid_candidates[result.index][0], result.relevance_score)
+            for result in response.results
+        ]
+        logger.info(f"[Reranker] Cohere Rerank thành công — Top-5 được chọn từ {len(candidates)} ứng viên.")
+        return reranked
+    except Exception as e:
+        logger.warning(f"[Reranker] Cohere Rerank thất bại ({e}), fallback về top-5 thô.")
+        return candidates[:5]
+
+
+# ---------------------------------------------------------------------------
 # Chat logic
 # ---------------------------------------------------------------------------
 
@@ -130,26 +187,38 @@ def process_query(question: str):
         logger.info(f"Truy vấn: {question}")
         
         try:
-            # CHẾ ĐỘ TIÊU CHUẨN: Gọi thẳng bộ truy xuất Hybrid (FAISS + BM25)
-            # Luồng xử lý này chỉ gọi OpenRouter API đúng 1 lần duy nhất để lấy Vector
-            retrieved_results = retriever.retrieve(question, top_k=10)
+            # Bước 1: Truy xuất 30 ứng viên thô từ Hybrid Retriever (FAISS + BM25)
+            # top_k=30 để Cohere Reranker có đủ không gian ứng viên tái xếp hạng
+            retrieved_results = retriever.retrieve(question, top_k=30)
             mode_status = ""
         except Exception as net_err:
-            # CHẾ ĐỘ DỰ PHÒNG KHẨN CẤP: Tự động kích hoạt khi OpenRouter sập hoặc trả về None gây lỗi FAISS
+            # Chế độ dự phòng: Hạ cấp sang BM25 Offline khi OpenRouter sập
             logger.warning(f"[FALLBACK ACTIVATED] Kênh Dense gặp sự cố ({net_err}). Hạ cấp sang BM25 Offline.")
-            retrieved_results = sparse_retriever.retrieve(question, top_k=10)
+            retrieved_results = sparse_retriever.retrieve(question, top_k=30)
             mode_status = "⚠️ *Hệ thống đang tự động vận hành ở Chế độ Dự phòng Khẩn cấp (BM25 Từ khóa) do lỗi nghẽn mạch API của đám mây OpenRouter. Kết quả trả ra vẫn đảm bảo trích dẫn nguồn chính xác.*\n\n"
 
-        contexts = []
+        # Bước 2: Rerank với Cohere để lọc top-5 ngữ cảnh chất lượng cao nhất
+        top_results = rerank_with_cohere(question, retrieved_results)
+
+        # Bước 3: Xây dựng contexts (text sạch cho LLM) và source_texts (có URL cho UI)
+        contexts = []      # Chỉ chứa text sạch — KHÔNG chứa URL để không làm nhiễu LLM
         source_texts = []
-        for i, (cid, score) in enumerate(retrieved_results):
+        for i, (cid, score) in enumerate(top_results):
             text = chunk_text_map.get(cid, "")
             title = chunk_title_map.get(cid, "Không xác định")
+            url = chunk_url_map.get(cid, "Không có liên kết")
             if text.strip():
-                contexts.append(text)
-                source_texts.append(f"**[Nguồn {i+1}] {title}** (Score: {score:.4f})\n{text}\n")
+                contexts.append(text)   # Text sạch cho LLM
+                # Định dạng link Markdown cho Gradio — chỉ hiển thị ở UI, không vào LLM
+                if url and url != "Không có liên kết":
+                    link_md = f"[Xem bài gốc]({url})"
+                else:
+                    link_md = "*Không có liên kết nguồn*"
+                source_texts.append(
+                    f"**[Nguồn {i+1}] {title}** (Score: {score:.4f}) — {link_md}\n\n{text}\n"
+                )
 
-        # 2. Generation (Gọi mô hình ngôn ngữ lớn qua tầng Auto-Fallback 3 lớp sẵn có)
+        # Bước 4: Sinh câu trả lời qua tầng Auto-Fallback 3 lớp
         answer = generate_answer(question, contexts)
         
         final_answer = f"{mode_status}{answer}"

@@ -2,12 +2,11 @@
 generation.py — Answer generation module for Phase 5 (Synthetic QA) and Phase 7 (RAG pipeline).
 
 Model priority for Phase 7 (generate_answer):
-  1. Groq LPU  : llama-3.3-70b-versatile  (if GROQ_API_KEY is set)
+  1. Gemini  : gemini-3.1-flash-lite  (if GEMINI_API_KEY is set)
   2. OpenRouter: google/gemma-4-31b-it:free (fallback, from config.yaml)
 
 Model for Phase 5 (generate_synthetic_qa_batch):
-  1. Google AI Studio: gemini-3.1-flash-lite-preview (if GEMINI_API_KEY is set)
-  2. OpenRouter: google/gemma-4-31b-it:free (fallback)
+  OpenRouter: google/gemma-4-31b-it:free (if OPENROUTER_API_KEY is set)
 """
 
 from openai import OpenAI
@@ -80,34 +79,26 @@ def generate_answer(query: str, contexts: List[str], max_retries: int = 1) -> st
     """
     Generate a RAG answer given a query and a list of retrieved context strings.
     Implements a 3-layer Auto-Fallback architecture:
-      1. Groq (llama-3.3-70b-versatile)
+      1. Gemini (gemini-3.1-flash-lite)
       2. OpenRouter (google/gemma-4-31b-it:free)
-      3. Gemini (gemini-3.1-flash-lite)
     """
     keys = {
-        "groq": get_env('GROQ_API_KEY'),
-        "openrouter": get_env('OPENROUTER_API_KEY'),
-        "gemini": get_env('GEMINI_API_KEY')
+        "gemini": get_env('GEMINI_API_KEY'),
+        "openrouter": get_env('OPENROUTER_API_KEY')
     }
 
     backends = []
-    if keys["groq"]:
+    if keys["gemini"]:
         backends.append({
-            "name": "Groq",
-            "client": OpenAI(base_url="https://api.groq.com/openai/v1", api_key=keys["groq"]),
-            "model": config['evaluation'].get('groq_model', 'llama-3.3-70b-versatile')
+            "name": "Gemini",
+            "client": OpenAI(base_url="https://generativelanguage.googleapis.com/v1beta/openai/", api_key=keys["gemini"]),
+            "model": "gemini-3.1-flash-lite"
         })
     if keys["openrouter"]:
         backends.append({
             "name": "OpenRouter",
             "client": OpenAI(base_url="https://openrouter.ai/api/v1", api_key=keys["openrouter"]),
             "model": config['generation'].get('model', 'google/gemma-4-31b-it:free')
-        })
-    if keys["gemini"]:
-        backends.append({
-            "name": "Gemini",
-            "client": OpenAI(base_url="https://generativelanguage.googleapis.com/v1beta/openai/", api_key=keys["gemini"]),
-            "model": "gemini-3.1-flash-lite"
         })
         
     if not backends:
@@ -146,51 +137,55 @@ def generate_answer(query: str, contexts: List[str], max_retries: int = 1) -> st
 
 def generate_synthetic_qa_batch(prompt: str, max_retries: int = 2) -> dict:
     """
-    Generate a batch of QA pairs using either Gemini (via OpenAI compatibility) or OpenRouter.
+    Generate a batch of QA pairs using llama-4-scout via Groq Cloud API.
     """
-    gemini_key = get_env('GEMINI_API_KEY')
-    openrouter_key = get_env('OPENROUTER_API_KEY')
+    groq_key = get_env('GROQ_API_KEY')  # Đảm bảo đã khai báo GROQ_API_KEY trong file .env
 
-    if gemini_key:
-        client = OpenAI(
-            base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
-            api_key=gemini_key
-        )
-        model_name = "gemini-3.1-flash-lite"
-    elif openrouter_key:
-        client = OpenAI(
-            base_url="https://openrouter.ai/api/v1",
-            api_key=openrouter_key
-        )
-        model_name = config['generation']['model']
-    else:
-        raise ValueError("Vui lòng set GEMINI_API_KEY hoặc OPENROUTER_API_KEY")
+    if not groq_key:
+        raise ValueError("Vui lòng thiết lập biến môi trường GROQ_API_KEY để kết nối hạ tầng Groq.")
+
+    # Khởi tạo kết nối thông qua cổng tương thích OpenAI của Groq
+    client = OpenAI(
+        base_url="https://api.groq.com/openai/v1",
+        api_key=groq_key
+    )
+    
+    # Cấu hình mã định danh mô hình chuẩn theo bảng Quota Groq
+    model_name = "qwen/qwen3-32b"
 
     for attempt in range(max_retries + 1):
         try:
             kwargs = {
                 "model": model_name,
                 "messages": [{"role": "user", "content": prompt}],
-                "temperature": 0.2
+                "temperature": 0.0,  # Ép logic toán học tối đa để kiểm soát cấu trúc JSON
+                "response_format": {"type": "json_object"}  # Kích hoạt JSON Mode gốc của Groq
             }
-            if not gemini_key:
-                kwargs["response_format"] = {"type": "json_object"}
 
             response = client.chat.completions.create(**kwargs)
-
             output_text = response.choices[0].message.content
-            clean_json = strip_markdown_json(output_text)
-            return json.loads(clean_json)
+            
+            if not output_text or output_text.strip() == "":
+                raise ValueError("Mô hình Groq phản hồi chuỗi trống.")
 
-        except json.JSONDecodeError as e:
-            logger.warning(f"JSON decode failed on attempt {attempt + 1}: {e}")
+            start_idx = output_text.find("{")
+            if start_idx == -1:
+                raise ValueError(f"Phản hồi không chứa ký tự mở đầu JSON.")
+
+            json_candidate = output_text[start_idx:]
+
+            decoder = json.JSONDecoder()
+            data, _ = decoder.raw_decode(json_candidate)
+            return data
+
+        except (json.JSONDecodeError, ValueError) as e:
+            logger.warning(f"Giải mã JSON thất bại tại lượt {attempt + 1}: {e}")
             if attempt == max_retries:
-                raise ValueError("Response was not valid JSON after retries")
+                raise ValueError("Mô hình không thể xuất ra cấu trúc định dạng JSON sạch.")
         except Exception as e:
-            logger.warning(f"API call failed on attempt {attempt + 1}: {e}")
+            logger.warning(f"Groq API gặp sự cố kết nối (lần {attempt + 1}): {e}")
             if attempt == max_retries:
                 raise e
 
-        sleep_time = (2 ** attempt) + (4 if gemini_key else 0)
-        logger.info(f"Retrying in {sleep_time} seconds...")
-        time.sleep(sleep_time)
+            sleep_time = (2 ** attempt) + 2
+            time.sleep(sleep_time)

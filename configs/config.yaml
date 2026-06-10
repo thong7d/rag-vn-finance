@@ -74,8 +74,10 @@ generation:
 synthetic_qa:
   articles_per_batch: 10        # 10 articles per single API call
   qa_per_article: 2             # 2 QA pairs per article
-  total_articles: 500           # 500 / 10 = 50 requests total
+  total_articles: 500           # tổng bài báo cần lấy (Stratified Sampling)
   checkpoint_every_batches: 5   # checkpoint every 50 articles
+  stratification_criterion: "source"   # cột phân tầng: source | ticker | category
+  random_state: 42              # hạt giống cố định cho Reproducibility
 
   output_dir: "synthetic_qa"
   output_dir_colab: "/content/drive/MyDrive/rag-vn-finance/synthetic_qa"
@@ -85,10 +87,15 @@ evaluation:
   # Ref: Zheng et al. (2023), "Judging LLM-as-a-Judge with MT-Bench"
   groq_model: "llama-3.3-70b-versatile"  # verify at Phase 0
   groq_rpm_limit: 30
-  eval_sample_size: 200         # full test set
+  eval_sample_size: 100         # giới hạn mẫu đánh giá Ragas
 
-  # Optional / Advanced — run only if time permits after demo
-  ragas_enabled: false
+  # Ragas — bật để đánh giá bộ QA tổng hợp bằng Llama 3.3 Trọng tài
+  ragas_enabled: true
+  ragas_llm: "meta-llama/llama-3.3-70b-instruct"   # via OpenRouter
+  ragas_metrics:
+    - faithfulness
+    - answer_relevancy
+    - context_recall
 
   output_dir: "evaluation"
   output_dir_colab: "/content/drive/MyDrive/rag-vn-finance/evaluation"
