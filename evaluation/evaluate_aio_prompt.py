@@ -11,7 +11,7 @@ Pipeline đánh giá:
        - faithfulness     : Câu trả lời có dựa trên ngữ cảnh được cung cấp không?
        - answer_relevancy : Câu trả lời có tập trung giải quyết câu hỏi không?
        - context_recall   : Ngữ cảnh trích xuất có chứa đầy đủ thông tin để trả lời câu hỏi không?
-  4. Xuất báo cáo evaluation_report_ragas.csv sử dụng cơ chế ghi đè an toàn (Atomic Write).
+  4. Xuất báo cáo evaluation_report_aio_prompt.csv sử dụng cơ chế ghi đè an toàn (Atomic Write).
 """
 
 import os
@@ -50,7 +50,7 @@ BM25_DIR            = config["indexing"]["bm25_dir"]
 DEFAULT_QA_FILE     = Path(config["synthetic_qa"]["output_dir"]) / "ground_truth_final.jsonl"
 OUTPUT_DIR          = Path(config["evaluation"]["output_dir"])
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-REPORT_PATH         = OUTPUT_DIR / "evaluation_report_ragas.csv"
+REPORT_PATH         = OUTPUT_DIR / "evaluation_report_aio_prompt.csv"
 
 # ---------------------------------------------------------------------------
 # Embedding API độc lập (Gọi OpenRouter)
