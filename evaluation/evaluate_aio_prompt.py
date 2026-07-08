@@ -1,17 +1,16 @@
 """
-evaluate_ragas.py — Phase 8 Extension: All-in-One Prompt Judge với Llama 3.3 70B
+evaluate_aio_prompt.py — Phase 8 Extension: All-in-One Prompt Judge
 ======================================================================================
-
 Script offline độc lập — KHÔNG được nhập vào app.py.
 
 Pipeline đánh giá:
-  1. Tải bộ QA sinh ra từ Phase 5 (ground_truth_final.jsonl).
-  2. Với mỗi câu hỏi, gọi pipeline RAG độc lập để trích xuất ngữ cảnh (dense, sparse, rerank cohere) và sinh câu trả lời thực tế.
+  1. Tải kết quả Generation từ Phase 7 (generation_results_{backend}.parquet).
+  2. Bỏ qua RAG pipeline, sử dụng trực tiếp các contexts và answers đã sinh sẵn.
   3. Đánh giá bằng All-in-One Prompt (LLM-as-a-Judge) thay vì Ragas để tiết kiệm Token:
        - faithfulness     : Câu trả lời có dựa trên ngữ cảnh được cung cấp không?
        - answer_relevancy : Câu trả lời có tập trung giải quyết câu hỏi không?
        - context_recall   : Ngữ cảnh trích xuất có chứa đầy đủ thông tin để trả lời câu hỏi không?
-  4. Xuất báo cáo evaluation_report_aio_prompt.csv sử dụng cơ chế ghi đè an toàn (Atomic Write).
+  4. Xuất báo cáo evaluation_report_aio_prompt_{backend}.csv sử dụng cơ chế ghi đè an toàn (Atomic Write).
 """
 
 import os
@@ -25,18 +24,11 @@ from pathlib import Path
 from typing import List, Dict, Optional, Tuple
 
 import pandas as pd
-import numpy as np
 import requests
-import faiss
-import cohere
 
-# Thêm thư mục gốc vào PYTHONPATH để import src
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.utils import setup_logger, load_config, get_env
-from src.retrieval import DenseRetriever, SparseRetriever, HybridRetriever
-from src.indexing import load_bm25_index
-from src.generation import generate_answer
 
 logger = setup_logger("LLM_Judge")
 config = load_config()
@@ -44,134 +36,11 @@ config = load_config()
 # ---------------------------------------------------------------------------
 # Cấu hình đường dẫn và tham số từ config
 # ---------------------------------------------------------------------------
-STRATEGY            = "fixed_size"
-INDEXES_DIR         = config["indexing"]["output_dir"]
-BM25_DIR            = config["indexing"]["bm25_dir"]
-DEFAULT_QA_FILE     = Path(config["synthetic_qa"]["output_dir"]) / "ground_truth_final.jsonl"
-OUTPUT_DIR          = Path(config["evaluation"]["output_dir"])
+backend = os.environ.get("VECTOR_STORE_BACKEND", "qdrant").lower()
+OUTPUT_DIR = Path(config["evaluation"]["output_dir"])
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-REPORT_PATH         = OUTPUT_DIR / "evaluation_report_aio_prompt.csv"
-
-# ---------------------------------------------------------------------------
-# Embedding API độc lập (Gọi OpenRouter)
-# ---------------------------------------------------------------------------
-class OpenRouterEmbeddingAPI:
-    def __init__(self):
-        self.api_url = "https://openrouter.ai/api/v1/embeddings"
-        self.api_key = get_env("OPENROUTER_API_KEY", "")
-        self.model_name = "intfloat/multilingual-e5-large"
-        
-        if not self.api_key:
-            logger.warning("OPENROUTER_API_KEY chưa được thiết lập!")
-
-    def encode(self, texts, *args, **kwargs) -> np.ndarray:
-        if isinstance(texts, str):
-            texts = [texts]
-            
-        prefixed_texts = [t if t.startswith("query: ") else f"query: {t}" for t in texts]
-        
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json"
-        }
-        
-        payload = {
-            "model": self.model_name,
-            "input": prefixed_texts
-        }
-        
-        start_time = time.time()
-        logger.info(f"[EMBEDDING] Gửi yêu cầu nhúng {len(prefixed_texts)} văn bản sang OpenRouter...")
-        
-        try:
-            response = requests.post(self.api_url, headers=headers, json=payload, timeout=15)
-            latency = time.time() - start_time
-            
-            if response.status_code == 200:
-                data = response.json()["data"]
-                embeddings = [item["embedding"] for item in data]
-                emb_array = np.array(embeddings, dtype=np.float32)
-                
-                logger.info(
-                    f"[EMBEDDING] Thành công | Model: {self.model_name} | "
-                    f"Thời gian: {latency:.2f}s | Kích thước: {emb_array.shape}"
-                )
-                return emb_array
-            else:
-                logger.error(f"[EMBEDDING ERROR] OpenRouter trả về lỗi: {response.status_code} - {response.text}")
-                raise RuntimeError(f"OpenRouter Embeddings API error: {response.text}")
-        except Exception as e:
-            logger.error(f"[EMBEDDING ERROR] Không thể kết nối hoặc gọi API: {e}")
-            raise e
-
-# ---------------------------------------------------------------------------
-# Tự khởi tạo hệ thống RAG độc lập (tránh import chéo gây chạy app.py)
-# ---------------------------------------------------------------------------
-def init_rag_system() -> Tuple[HybridRetriever, SparseRetriever, Dict[str, str]]:
-    logger.info("Khởi tạo các thành phần RAG độc lập...")
-    
-    # 1. Embedding Model
-    embedding_model = OpenRouterEmbeddingAPI()
-    
-    # 2. FAISS Index & Metadata Map
-    faiss_dir = Path(INDEXES_DIR) / STRATEGY
-    logger.info(f"Loading FAISS từ {faiss_dir}...")
-    if not faiss_dir.exists():
-        raise FileNotFoundError(f"Không tìm thấy thư mục FAISS: {faiss_dir}")
-        
-    faiss_index = faiss.read_index(str(faiss_dir / 'index.faiss'))
-    with open(faiss_dir / 'chunk_ids.json', 'r', encoding='utf-8') as f:
-        dense_chunk_ids = json.load(f)
-        
-    df_meta = pd.read_parquet(faiss_dir / 'metadata.parquet')
-    chunk_text_map = dict(zip(df_meta['chunk_id'], df_meta['text']))
-    
-    dense_retriever = DenseRetriever(faiss_index, dense_chunk_ids, embedding_model)
-    
-    # 3. BM25 Index
-    logger.info(f"Loading BM25 từ {BM25_DIR}...")
-    bm25_index, sparse_chunk_ids = load_bm25_index(BM25_DIR, STRATEGY)
-    sparse_retriever = SparseRetriever(bm25_index, sparse_chunk_ids)
-    
-    # 4. Hybrid Retriever
-    retriever = HybridRetriever(dense_retriever, sparse_retriever, rrf_k=60)
-    
-    logger.info("Hệ thống RAG đã khởi tạo thành công ngoại tuyến.")
-    return retriever, sparse_retriever, chunk_text_map
-
-# ---------------------------------------------------------------------------
-# Cohere Reranker
-# ---------------------------------------------------------------------------
-def rerank_with_cohere(query: str, candidates: List[Tuple[str, float]], chunk_text_map: Dict[str, str]) -> List[Tuple[str, float]]:
-    cohere_key = get_env("COHERE_API_KEY", "")
-    if not cohere_key:
-        logger.warning("[Reranker] COHERE_API_KEY chưa được thiết lập, bỏ qua bước Rerank.")
-        return candidates[:5]
-
-    docs = [chunk_text_map.get(cid, "") for cid, _ in candidates]
-    valid_pairs = [(cid_score, doc) for cid_score, doc in zip(candidates, docs) if doc.strip()]
-    if not valid_pairs:
-        return candidates[:5]
-
-    valid_candidates, valid_docs = zip(*valid_pairs)
-
-    try:
-        co = cohere.Client(api_key=cohere_key)
-        response = co.rerank(
-            model="rerank-multilingual-v3.0",
-            query=query,
-            documents=list(valid_docs),
-            top_n=5,
-        )
-        reranked = [
-            (valid_candidates[result.index][0], result.relevance_score)
-            for result in response.results
-        ]
-        logger.info(f"[Reranker] Cohere Rerank thành công — Lọc top-5 từ {len(candidates)} ứng viên.")
-        return reranked
-    except Exception as e:
-        logger.warning(f"[Reranker] Cohere Rerank thất bại ({e}), fallback về top-5 thô.")
-        return candidates[:5]
+INPUT_PARQUET = OUTPUT_DIR / f"generation_results_{backend}.parquet"
+REPORT_PATH = OUTPUT_DIR / f"evaluation_report_aio_prompt_{backend}.csv"
 
 # ---------------------------------------------------------------------------
 # Khởi tạo LLM Judge (Llama 3.3 70B qua LangChain ChatGroq)
@@ -249,10 +118,9 @@ USER_PROMPT_TEMPLATE = """### QUESTION
 {generated_answer}"""
 
 # ---------------------------------------------------------------------------
-# Fuzzy Key JSON Parser (Chống lệch Key từ Llama 3.3)
+# Fuzzy Key JSON Parser
 # ---------------------------------------------------------------------------
 def parse_judge_json(raw_text: str) -> dict:
-    """Bóc tách JSON từ văn bản phản hồi và khớp khóa mềm dẻo (Fuzzy Key Matching)."""
     try:
         clean_text = raw_text.strip()
         pattern = r"^```(?:json)?\s*\n?(.*?)\n?\s*```$"
@@ -262,49 +130,24 @@ def parse_judge_json(raw_text: str) -> dict:
             
         data = json.loads(clean_text)
         
-        # Ánh xạ khóa mờ (Fuzzy Mapping)
-        normalized_data = {}
-        
-        # 1. Faithfulness
         faithfulness_val = None
         for k, v in data.items():
-            k_lower = k.lower()
-            if k_lower in ["faithfulness", "faithful", "faithfulness_score", "faith"]:
+            if "faith" in k.lower():
                 faithfulness_val = v
                 break
-        if faithfulness_val is None:
-            for k, v in data.items():
-                if "faith" in k.lower():
-                    faithfulness_val = v
-                    break
         
-        # 2. Answer Relevancy
         relevancy_val = None
         for k, v in data.items():
-            k_lower = k.lower()
-            if k_lower in ["answer_relevancy", "answer_relevance", "relevancy", "relevance", "answer_relevancy_score"]:
+            if "relev" in k.lower() or "answer" in k.lower():
                 relevancy_val = v
                 break
-        if relevancy_val is None:
-            for k, v in data.items():
-                if "relev" in k.lower() or "answer" in k.lower():
-                    relevancy_val = v
-                    break
-                    
-        # 3. Context Recall
+                
         recall_val = None
         for k, v in data.items():
-            k_lower = k.lower()
-            if k_lower in ["context_recall", "recall", "context_recall_score"]:
+            if "recall" in k.lower() or "context" in k.lower():
                 recall_val = v
                 break
-        if recall_val is None:
-            for k, v in data.items():
-                if "recall" in k.lower() or "context" in k.lower():
-                    recall_val = v
-                    break
-                    
-        # Hàm trích xuất score & reasoning từ value
+                
         def extract_score_reason(val) -> Tuple[float, str]:
             score = 0.0
             reasoning = "No reason provided"
@@ -331,7 +174,7 @@ def parse_judge_json(raw_text: str) -> dict:
             "context_recall_reasoning": c_reason
         }
     except Exception as e:
-        logger.warning(f"Lỗi khi giải mã JSON phản hồi của Giám khảo: {e}. Chuỗi thô: {raw_text}")
+        logger.warning(f"Lỗi khi giải mã JSON phản hồi: {e}. Chuỗi thô: {raw_text}")
         return {
             "faithfulness_score": 0.0,
             "faithfulness_reasoning": f"Failed to parse JSON: {str(e)}",
@@ -361,7 +204,6 @@ def call_judge_with_retry(judge_llm, question: str, ground_truth: str, retrieved
             raw_text = response.content.strip()
             parsed_result = parse_judge_json(raw_text)
             
-            # Nếu parsing hoàn toàn thất bại (bị gán default parse error), kích hoạt thử lại
             if (parsed_result["faithfulness_score"] == 0.0 and 
                 parsed_result["faithfulness_reasoning"].startswith("Failed to parse JSON")):
                 raise ValueError(f"JSON Output không đúng định dạng mong muốn: {raw_text[:200]}")
@@ -371,33 +213,33 @@ def call_judge_with_retry(judge_llm, question: str, ground_truth: str, retrieved
             err_str = str(e).lower()
             logger.warning(f"[Judge API] Thử lần {attempt + 1}/{max_retries} thất bại. Chi tiết: {e}")
             
-            # Xử lý Rate Limit (HTTP 429)
+            # Detect critical rate limit (Daily Quota) or Out of Funds
+            if "limit 100000" in err_str or "tokens per day" in err_str:
+                logger.error("!!! CRITICAL: Đã đạt giới hạn Token theo ngày (Daily Limit) của Groq !!! Dừng chương trình ngay.")
+                sys.exit(1)
+            if "402" in err_str or "out of credits" in err_str:
+                logger.error("!!! CRITICAL: Hết tiền (Out of Credits/Funds) !!! Dừng chương trình ngay.")
+                sys.exit(1)
+                
             if "429" in err_str or "rate limit" in err_str or "tpm" in err_str or "rpm" in err_str:
                 sleep_time = 30 + 10 * attempt
-                logger.info(f"[Judge API] Phát hiện giới hạn cuộc gọi (Rate Limit). Tạm nghỉ {sleep_time}s trước khi thử lại...")
+                logger.info(f"[Judge API] Phát hiện giới hạn cuộc gọi. Tạm nghỉ {sleep_time}s trước khi thử lại...")
                 time.sleep(sleep_time)
             else:
                 sleep_time = 5 * (attempt + 1)
                 logger.info(f"[Judge API] Gặp lỗi thông thường. Thử lại sau {sleep_time}s...")
                 time.sleep(sleep_time)
                 
-    return {
-        "faithfulness_score": 0.0,
-        "faithfulness_reasoning": "ERROR: Tất cả các lượt thử gọi LLM Judge đều thất bại.",
-        "answer_relevancy_score": 0.0,
-        "answer_relevancy_reasoning": "ERROR: Tất cả các lượt thử gọi LLM Judge đều thất bại.",
-        "context_recall_score": 0.0,
-        "context_recall_reasoning": "ERROR: Tất cả các lượt thử gọi LLM Judge đều thất bại."
-    }
+    # Nếu chạy hết 3 lượt vẫn lỗi, KHÔNG trả về 0.0 để tránh làm hỏng Checkpoint
+    # Thay vào đó, ném ngoại lệ để main() bắt và dừng chương trình
+    raise RuntimeError("Tất cả 3 lượt thử gọi API đều thất bại. Có thể do lỗi mạng hoặc Rate Limit kéo dài. Dừng chương trình để bảo toàn Checkpoint.")
 
 # ---------------------------------------------------------------------------
 # Lưu file an toàn (Atomic Save CSV)
 # ---------------------------------------------------------------------------
 def atomic_save_csv(df: pd.DataFrame, file_path: Path):
-    """Lưu DataFrame xuống tệp CSV bằng kỹ thuật Atomic Write để tránh hỏng dữ liệu."""
     temp_path = file_path.with_suffix(".csv.tmp")
     try:
-        # Sử dụng utf-8-sig để Excel hiển thị đúng dấu tiếng Việt
         df.to_csv(temp_path, index=False, encoding="utf-8-sig")
         if temp_path.exists():
             os.replace(temp_path, file_path)
@@ -419,20 +261,14 @@ def main():
     parser.add_argument("--cooldown", type=int, default=20, help="Thời gian nghỉ giữa các lần chấm điểm (giây) để chống Rate Limit")
     args = parser.parse_args()
     
-    # 1. Kiểm tra tập ground truth
-    if not DEFAULT_QA_FILE.exists():
-        logger.error(f"Không tìm thấy file Ground Truth tại: {DEFAULT_QA_FILE}")
+    # 1. Đọc kết quả đã sinh từ Phase 7
+    if not INPUT_PARQUET.exists():
+        logger.error(f"Không tìm thấy file kết quả Generation tại: {INPUT_PARQUET}")
         sys.exit(1)
         
-    records = []
-    with open(DEFAULT_QA_FILE, "r", encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            records.append(json.loads(line))
-            
-    logger.info(f"Đã tải {len(records)} mẫu từ {DEFAULT_QA_FILE}")
+    df_eval = pd.read_parquet(INPUT_PARQUET)
+    records = df_eval.to_dict("records")
+    logger.info(f"Đã tải {len(records)} mẫu từ {INPUT_PARQUET}")
     
     if args.limit:
         records = records[:args.limit]
@@ -444,14 +280,12 @@ def main():
     if REPORT_PATH.exists():
         try:
             existing_df = pd.read_csv(REPORT_PATH)
-            # Chỉ coi là đã hoàn thành nếu điểm số khác rỗng/nan
             completed_df = existing_df[existing_df["faithfulness_score"].notna()]
             existing_questions = set(completed_df["question"].astype(str).str.strip().tolist())
             logger.info(f"Đã tìm thấy {len(existing_questions)} mẫu đã được chấm điểm trong báo cáo cũ. Sẽ bỏ qua.")
         except Exception as e:
             logger.warning(f"Không thể đọc kết quả cũ: {e}. Sẽ chạy lại mới từ đầu.")
             
-    # Lọc danh sách cần xử lý thực tế
     pending_records = [r for r in records if r["question"].strip() not in existing_questions]
     logger.info(f"Tổng số mẫu cần xử lý thực tế: {len(pending_records)}")
     
@@ -459,12 +293,11 @@ def main():
         logger.info("Không có mẫu mới nào cần đánh giá. Chương trình kết thúc.")
         return
         
-    # 3. Khởi tạo pipeline RAG và LLM Judge
+    # 3. Khởi tạo LLM Judge
     try:
-        retriever, sparse_retriever, chunk_text_map = init_rag_system()
         judge_llm = build_llm_judge()
     except Exception as e:
-        logger.error(f"Lỗi khởi tạo các thành phần hệ thống: {e}")
+        logger.error(f"Lỗi khởi tạo LLM Judge: {e}")
         sys.exit(1)
         
     # Vòng lặp chính xử lý từng mẫu
@@ -473,57 +306,34 @@ def main():
     
     for idx, record in enumerate(pending_records):
         question = record["question"]
-        ground_truth = record["ground_truth"]
+        ground_truth = record.get("ground_truth", "")
+        retrieved_contexts_str = record.get("retrieved_context", "")
+        generated_answer = record.get("generated_answer", "")
         
         logger.info(f"\n==========================================")
         logger.info(f"Xử lý mẫu {idx + 1}/{len(pending_records)} (Tổng số: {total_processed + 1})")
-        logger.info(f"Câu hỏi: {question}")
+        logger.info(f"Câu hỏi: {question[:100]}...")
         
-        # A. Sinh câu trả lời RAG (Truy xuất + Rerank + Sinh câu trả lời)
-        try:
-            # Truy xuất 30 ứng viên từ Hybrid Retriever
-            try:
-                retrieved_results = retriever.retrieve(question, top_k=30)
-            except Exception as net_err:
-                logger.warning(f"Kênh Dense gặp sự cố ({net_err}). Hạ cấp dự phòng sang BM25 Offline.")
-                retrieved_results = sparse_retriever.retrieve(question, top_k=30)
-                
-            # Rerank bằng Cohere
-            top_results = rerank_with_cohere(question, retrieved_results, chunk_text_map)
-            
-            # Format context cho LLM
-            contexts = []
-            for cid, _ in top_results:
-                text = chunk_text_map.get(cid, "")
-                if text.strip():
-                    contexts.append(text)
-                    
-            retrieved_contexts_str = "\n\n".join([f"[Đoạn {i+1}]: {ctx}" for i, ctx in enumerate(contexts)])
-            
-            # Sinh câu trả lời bằng Generator
-            generated_answer = generate_answer(question, contexts)
-            logger.info(f"Câu trả lời RAG sinh ra: {generated_answer[:150]}...")
-            
-        except Exception as e:
-            logger.error(f"Thất bại khi chạy RAG Pipeline cho câu hỏi '{question}': {e}")
-            continue
-            
-        # B. Đánh giá bằng LLM Judge (All-in-One Prompt)
+        # Đánh giá bằng LLM Judge (All-in-One Prompt)
         logger.info("Đang gọi Llama 3.3 Judge để đánh giá 3 chỉ số...")
-        scores = call_judge_with_retry(
-            judge_llm=judge_llm,
-            question=question,
-            ground_truth=ground_truth,
-            retrieved_contexts_str=retrieved_contexts_str,
-            generated_answer=generated_answer
-        )
+        try:
+            scores = call_judge_with_retry(
+                judge_llm=judge_llm,
+                question=question,
+                ground_truth=ground_truth,
+                retrieved_contexts_str=retrieved_contexts_str,
+                generated_answer=generated_answer
+            )
+        except RuntimeError as e:
+            logger.error(f"[FATAL] {e}")
+            sys.exit(1)
         
         logger.info(f"-> Chấm điểm thành công:")
         logger.info(f"   - Faithfulness: {scores['faithfulness_score']} ({scores['faithfulness_reasoning']})")
         logger.info(f"   - Answer Relevancy: {scores['answer_relevancy_score']} ({scores['answer_relevancy_reasoning']})")
         logger.info(f"   - Context Recall: {scores['context_recall_score']} ({scores['context_recall_reasoning']})")
         
-        # C. Gom kết quả mới vào bộ đệm
+        # Gom kết quả mới vào bộ đệm
         res_row = {
             "question": question,
             "ground_truth": ground_truth,
@@ -539,9 +349,9 @@ def main():
         new_results.append(res_row)
         total_processed += 1
         
-        # D. Checkpoint mỗi 5 mẫu (hoặc khi kết thúc tập dữ liệu)
+        # Checkpoint mỗi 5 mẫu (hoặc khi kết thúc tập dữ liệu)
         if total_processed % 5 == 0 or idx == len(pending_records) - 1:
-            logger.info("Đang lưu checkpoint dữ liệu an sau...")
+            logger.info("Đang lưu checkpoint dữ liệu an toàn...")
             df_new = pd.DataFrame(new_results)
             if existing_df is not None:
                 df_combined = pd.concat([existing_df, df_new], ignore_index=True)
@@ -549,11 +359,10 @@ def main():
                 df_combined = df_new
                 
             atomic_save_csv(df_combined, REPORT_PATH)
-            # Cập nhật DataFrame gốc để các batch sau ghép tiếp
             existing_df = df_combined
-            new_results = []  # Xóa sạch bộ đệm tạm thời
+            new_results = []
             
-        # E. Sleep Cooldown chống Rate Limit
+        # Sleep Cooldown chống Rate Limit
         if idx < len(pending_records) - 1:
             logger.info(f"Nghỉ cooldown {args.cooldown}s chống rate limit Groq...")
             time.sleep(args.cooldown)

@@ -1,0 +1,2 @@
+strategy,method,rouge_l_mean,rouge_l_std,bertscore_f1_mean,bertscore_f1_std,faithfulness_score_mean,faithfulness_score_std,answer_relevance_score_mean,answer_relevance_score_std,Precision@10,Recall@10,MRR,NDCG@10
+fixed_size,Hybrid,0.5439,0.1765,0.4837,0.4092,4.4873,1.1231,4.934,0.4956,0.3066124109867751,0.9511698880976602,0.8554057872725217,0.840343807666971

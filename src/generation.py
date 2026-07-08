@@ -78,61 +78,45 @@ def strip_markdown_json(text: str) -> str:
 def generate_answer(query: str, contexts: List[str], max_retries: int = 1) -> str:
     """
     Generate a RAG answer given a query and a list of retrieved context strings.
-    Implements a 3-layer Auto-Fallback architecture:
-      1. Gemini (gemini-3.1-flash-lite)
-      2. OpenRouter (google/gemma-4-31b-it:free)
+    Locked to Gemini (gemini-3.1-flash-lite) to synchronize with Phase 7.
     """
-    keys = {
-        "gemini": get_env('GEMINI_API_KEY'),
-        "openrouter": get_env('OPENROUTER_API_KEY')
-    }
+    gemini_key = get_env('GEMINI_API_KEY')
+    if not gemini_key:
+        raise ValueError("Vui lòng thiết lập biến môi trường GEMINI_API_KEY.")
 
-    backends = []
-    if keys["gemini"]:
-        backends.append({
-            "name": "Gemini",
-            "client": OpenAI(base_url="https://generativelanguage.googleapis.com/v1beta/openai/", api_key=keys["gemini"]),
-            "model": "gemini-3.1-flash-lite"
-        })
-    if keys["openrouter"]:
-        backends.append({
-            "name": "OpenRouter",
-            "client": OpenAI(base_url="https://openrouter.ai/api/v1", api_key=keys["openrouter"]),
-            "model": config['generation'].get('model', 'google/gemma-4-31b-it:free')
-        })
-        
-    if not backends:
-        raise ValueError("Vui lòng set ít nhất một API KEY (GROQ, OPENROUTER, hoặc GEMINI).")
-
+    client = OpenAI(
+        base_url="https://generativelanguage.googleapis.com/v1beta/openai/", 
+        api_key=gemini_key
+    )
+    
+    model_name = "gemini-3.1-flash-lite"
     user_prompt = build_rag_prompt(query, contexts)
 
     last_exception = None
-    for backend in backends:
-        logger.info(f"Đang xử lý qua {backend['name']} ({backend['model']})...")
-        for attempt in range(max_retries + 1):
-            try:
-                response = backend["client"].chat.completions.create(
-                    model=backend["model"],
-                    messages=[
-                        {"role": "system", "content": RAG_SYSTEM_PROMPT},
-                        {"role": "user", "content": user_prompt}
-                    ],
-                    temperature=config['generation'].get('temperature', 0.2),
-                    max_tokens=config['generation'].get('max_tokens', 1024)
-                )
-                return response.choices[0].message.content.strip()
+    logger.info(f"Đang xử lý qua Gemini ({model_name})...")
+    
+    for attempt in range(max_retries + 1):
+        try:
+            response = client.chat.completions.create(
+                model=model_name,
+                messages=[
+                    {"role": "system", "content": RAG_SYSTEM_PROMPT},
+                    {"role": "user", "content": user_prompt}
+                ],
+                temperature=config['generation'].get('temperature', 0.2),
+                max_tokens=config['generation'].get('max_tokens', 1024)
+            )
+            return response.choices[0].message.content.strip()
 
-            except Exception as e:
-                last_exception = e
-                logger.warning(f"{backend['name']} thất bại (lần {attempt + 1}): {e}")
-                if attempt < max_retries:
-                    sleep_time = 2 ** attempt
-                    logger.info(f"Đang thử lại {backend['name']} sau {sleep_time}s...")
-                    time.sleep(sleep_time)
-        
-        logger.warning(f"FALLBACK: Không thể gọi {backend['name']}, chuyển sang backend tiếp theo...")
+        except Exception as e:
+            last_exception = e
+            logger.warning(f"Gemini thất bại (lần {attempt + 1}): {e}")
+            if attempt < max_retries:
+                sleep_time = 2 ** attempt
+                logger.info(f"Đang thử lại Gemini sau {sleep_time}s...")
+                time.sleep(sleep_time)
 
-    raise RuntimeError(f"Tất cả các backend đều sập. Lỗi cuối cùng: {last_exception}")
+    raise RuntimeError(f"Gọi Gemini API thất bại. Lỗi cuối cùng: {last_exception}")
 
 
 def generate_synthetic_qa_batch(prompt: str, max_retries: int = 2) -> dict:

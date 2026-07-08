@@ -20,9 +20,45 @@ from huggingface_hub import InferenceClient
 import cohere
 
 from src.utils import setup_logger
-from src.retrieval import DenseRetriever, SparseRetriever, HybridRetriever
+from src.retrieval import DenseRetriever, SparseRetriever, HybridRetriever, create_dense_retriever
 from src.indexing import load_bm25_index
 from src.generation import generate_answer
+
+# ── Unpack Qdrant data to /tmp on startup (HF Spaces Container-safe) ──────────
+import zipfile
+import shutil
+
+# Lấy chiến lược Chunking tốt nhất (đã được đánh giá ở Phase 6) từ cấu hình Môi trường
+STRATEGY = os.environ.get("CHUNK_STRATEGY", "sentence_aware").strip()
+
+# Đảm bảo đường dẫn tuyệt đối bất chấp thư mục làm việc (CWD) của HF Spaces
+_project_root = os.path.dirname(os.path.abspath(__file__))
+_qdrant_tmp_path = f"/tmp/qdrant_data/{STRATEGY}"
+_qdrant_zip_path = os.path.join(_project_root, "qdrant_data.zip")
+
+if os.environ.get("VECTOR_STORE_BACKEND", "faiss").lower().strip() == "qdrant":
+    if not os.path.exists(_qdrant_tmp_path):
+        print(f"[Startup] Đang bung nén dữ liệu Qdrant cho chiến lược '{STRATEGY}' vào /tmp...")
+        shutil.rmtree("/tmp/qdrant_data", ignore_errors=True)  # Dọn dẹp nếu có lỗi cũ
+        if os.path.exists(_qdrant_zip_path):
+            with zipfile.ZipFile(_qdrant_zip_path, 'r') as zip_ref:
+                for zip_info in zip_ref.infolist():
+                    # Sửa lỗi chí mạng: Windows Compress-Archive tạo file zip chứa dấu '\'
+                    # Trên Linux (HF Spaces), '\' bị coi là ký tự tên file chứ không phải thư mục!
+                    fixed_name = zip_info.filename.replace('\\', '/')
+                    zip_info.filename = fixed_name
+                    
+                    # Nếu zip đã chứa sẵn thư mục qdrant_data thì xả thẳng vào /tmp
+                    # Nếu zip chỉ chứa sentence_aware/... thì xả vào /tmp/qdrant_data
+                    if fixed_name.startswith('qdrant_data/'):
+                        zip_ref.extract(zip_info, "/tmp")
+                    else:
+                        zip_ref.extract(zip_info, "/tmp/qdrant_data")
+            print(f"[Startup] ✅ Giải nén hoàn tất — Cấu trúc: /tmp/qdrant_data/{STRATEGY}")
+        else:
+            print(f"[Startup] ⚠️ Không tìm thấy file {_qdrant_zip_path}. Bỏ qua giải nén.")
+    else:
+        print(f"[Startup] ✅ Dữ liệu Qdrant đã sẵn sàng tại {_qdrant_tmp_path}, bỏ qua giải nén.")
 
 logger = setup_logger("GradioApp")
 
@@ -30,10 +66,8 @@ logger = setup_logger("GradioApp")
 # Global initialization
 # ---------------------------------------------------------------------------
 
-# Hardcoded best config for deployment to save RAM (Max ~6GB)
-STRATEGY = "fixed_size"
-INDEXES_DIR = os.environ.get("INDEXES_DIR", "indexes")
-BM25_DIR = os.environ.get("BM25_DIR", "bm25")
+INDEXES_DIR = os.environ.get("INDEXES_DIR", os.path.join(_project_root, "indexes")).strip()
+BM25_DIR = os.environ.get("BM25_DIR", os.path.join(_project_root, "bm25")).strip()
 
 logger.info("Khởi tạo hệ thống RAG...")
 
@@ -97,13 +131,15 @@ class OpenRouterEmbeddingAPI:
 # Kích hoạt thực thể kết nối API trực tiếp
 embedding_model = OpenRouterEmbeddingAPI()
 
-# Load FAISS
-faiss_dir = os.path.join(INDEXES_DIR, STRATEGY)
-logger.info(f"Loading FAISS từ {faiss_dir}...")
-if not os.path.exists(faiss_dir):
-    raise FileNotFoundError(f"Không tìm thấy thư mục FAISS: {faiss_dir}")
+# Load backend configuration
+backend = os.environ.get("VECTOR_STORE_BACKEND", "faiss").lower().strip()
+logger.info(f"Sử dụng Vector Store Backend: {backend.upper()}")
 
-faiss_index = faiss.read_index(os.path.join(faiss_dir, 'index.faiss'))
+# Load metadata & chunk IDs (Needed by RAG components for backward compatibility)
+faiss_dir = os.path.join(INDEXES_DIR, STRATEGY)
+if not os.path.exists(faiss_dir):
+    raise FileNotFoundError(f"Không tìm thấy thư mục chỉ mục/metadata: {faiss_dir}")
+
 with open(os.path.join(faiss_dir, 'chunk_ids.json'), 'r', encoding='utf-8') as f:
     dense_chunk_ids = json.load(f)
 
@@ -117,7 +153,51 @@ chunk_url_map = dict(zip(
     df_meta.get('url', df_meta.get('link', pd.Series("Không có liên kết", index=df_meta.index)))
 ))
 
-dense_retriever = DenseRetriever(faiss_index, dense_chunk_ids, embedding_model)
+# Initialize Dense Retriever
+if backend == "faiss":
+    logger.info(f"Loading FAISS từ {faiss_dir}...")
+    faiss_index = faiss.read_index(os.path.join(faiss_dir, 'index.faiss'))
+    dense_retriever = create_dense_retriever(
+        backend="faiss",
+        index=faiss_index,
+        chunk_ids=dense_chunk_ids,
+        model=embedding_model
+    )
+elif backend == "qdrant":
+    from qdrant_client import QdrantClient
+    from src.utils import load_config, get_env
+    from pathlib import Path
+    
+    config = load_config()
+    qdrant_url = get_env("QDRANT_URL")
+    qdrant_api_key = get_env("QDRANT_API_KEY")
+    collection_name = f"{config.get('vector_store', {}).get('qdrant', {}).get('collection_name', 'vn_finance')}_{STRATEGY}"
+    
+    if qdrant_url:
+        logger.info(f"Kết nối tới remote Qdrant Cloud: {qdrant_url}")
+        qdrant_client = QdrantClient(url=qdrant_url, api_key=qdrant_api_key)
+    else:
+        local_path = config.get("vector_store", {}).get("qdrant", {}).get("local_path", "qdrant_data")
+        project_root = Path(__file__).resolve().parent
+        
+        # Nếu đang chạy trên HF Spaces và đã giải nén vào /tmp thì dùng /tmp
+        if os.path.exists(_qdrant_tmp_path):
+            qdrant_dir = Path("/tmp/qdrant_data") / STRATEGY
+        else:
+            qdrant_dir = project_root / local_path / STRATEGY
+            
+        logger.info(f"Kết nối tới local Qdrant nhúng tại: {qdrant_dir}")
+        qdrant_client = QdrantClient(path=str(qdrant_dir))
+        
+    dense_retriever = create_dense_retriever(
+        backend="qdrant",
+        client=qdrant_client,
+        collection_name=collection_name,
+        chunk_ids=dense_chunk_ids,
+        model=embedding_model
+    )
+else:
+    raise ValueError(f"Không nhận dạng được VECTOR_STORE_BACKEND: {backend}")
 
 # Load BM25
 logger.info(f"Loading BM25 từ {BM25_DIR}...")
@@ -192,10 +272,10 @@ def process_query(question: str):
             retrieved_results = retriever.retrieve(question, top_k=30)
             mode_status = ""
         except Exception as net_err:
-            # Chế độ dự phòng: Hạ cấp sang BM25 Offline khi OpenRouter sập
+            # Chế độ dự phòng: Hạ cấp sang BM25 Offline khi API Embeddings sập
             logger.warning(f"[FALLBACK ACTIVATED] Kênh Dense gặp sự cố ({net_err}). Hạ cấp sang BM25 Offline.")
             retrieved_results = sparse_retriever.retrieve(question, top_k=30)
-            mode_status = "⚠️ *Hệ thống đang tự động vận hành ở Chế độ Dự phòng Khẩn cấp (BM25 Từ khóa) do lỗi nghẽn mạch API của đám mây OpenRouter. Kết quả trả ra vẫn đảm bảo trích dẫn nguồn chính xác.*\n\n"
+            mode_status = "⚠️ *Hệ thống đang tự động vận hành ở Chế độ Dự phòng Khẩn cấp (BM25 Từ khóa) do lỗi nghẽn mạch truy xuất Dense. Kết quả trả ra vẫn đảm bảo trích dẫn nguồn chính xác.*\n\n"
 
         # Bước 2: Rerank với Cohere để lọc top-5 ngữ cảnh chất lượng cao nhất
         top_results = rerank_with_cohere(question, retrieved_results)
@@ -218,7 +298,7 @@ def process_query(question: str):
                     f"**[Nguồn {i+1}] {title}** (Score: {score:.4f}) — {link_md}\n\n{text}\n"
                 )
 
-        # Bước 4: Sinh câu trả lời qua tầng Auto-Fallback 3 lớp
+        # Bước 4: Sinh câu trả lời qua mô hình sinh duy nhất (Gemini)
         answer = generate_answer(question, contexts)
         
         final_answer = f"{mode_status}{answer}"
@@ -233,9 +313,9 @@ def process_query(question: str):
 # UI Definition
 # ---------------------------------------------------------------------------
 
-with gr.Blocks(theme=gr.themes.Soft()) as demo:
+with gr.Blocks() as demo:
     gr.Markdown("# 📈 Vietnamese Financial News RAG System")
-    gr.Markdown("Hệ thống hỏi đáp tài chính được trang bị Auto-Fallback 3 lớp (Groq ⚡ -> OpenRouter -> Gemini).")
+    gr.Markdown("Hệ thống hỏi đáp tài chính chuyên nghiệp với mô hình **Google Gemini 3.1 Flash Lite**.")
     
     with gr.Row():
         with gr.Column(scale=2):
@@ -268,8 +348,10 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    # Giữ nguyên cấu hình queue bảo vệ rate limit
-    demo.queue(default_concurrency_limit=1)
-    
-    # Ép buộc bind đúng cổng hạ tầng của HF Spaces mong muốn
-    demo.launch(server_name="0.0.0.0", server_port=7860)
+    # queue() là bắt buộc trên HF Spaces để tránh server bị ngắt kết nối khi nhiều người dùng
+    # default_concurrency_limit=1 bảo vệ Rate Limit của API
+    demo.queue(default_concurrency_limit=1).launch(
+        server_name="0.0.0.0", 
+        server_port=7860,
+        theme=gr.themes.Soft()
+    )

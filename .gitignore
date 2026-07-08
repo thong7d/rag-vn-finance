@@ -81,5 +81,14 @@ desktop.ini
 Dockerfile
 docker-compose.yml
 
+# Qdrant data files
+qdrant_data.zip
+qdrant_data/
+
+# Large parquet results
+evaluation/*.parquet
+evaluation/**/*.parquet
+
 # Logs
 *.log
+

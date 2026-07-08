@@ -50,22 +50,20 @@
 # # Near-duplicate detection
 # datasketch==1.6.4
 
-faiss-cpu==1.8.0
-rank-bm25==0.2.2
-pandas==2.2.2
+faiss-cpu
+rank-bm25
+pandas
 pyarrow
-fastapi==0.110.3
-starlette==0.37.2
-uvicorn==0.29.0
-jinja2==3.1.4
+fastapi
+starlette
+uvicorn
+jinja2
 tenacity
-numpy==1.26.4
+numpy
 requests
 google-generativeai
 groq
 openai
-huggingface_hub<=0.25.2
+huggingface_hub
 cohere
-langchain-openai
-ragas==0.1.21
-datasets==2.20.0
+qdrant-client

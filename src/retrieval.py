@@ -42,6 +42,58 @@ class DenseRetriever:
                 
         return results
 
+# Alias for backward compatibility and naming consistency in factory pattern
+FaissDenseRetriever = DenseRetriever
+
+class QdrantDenseRetriever:
+    def __init__(self, client, collection_name: str, model, chunk_ids: List[str] = None):
+        self.client = client
+        self.collection_name = collection_name
+        self.model = model
+        self.chunk_ids = chunk_ids
+
+    def retrieve(self, query: str, top_k: int = 10) -> List[Tuple[str, float]]:
+        # E5 requires the "query: " prefix
+        prefixed_query = f"query: {query}"
+        
+        # Encode the query
+        query_emb = self.model.encode(
+            [prefixed_query],
+            show_progress_bar=False,
+            normalize_embeddings=False,  # No manual L2 normalization (Qdrant handles Cosine)
+            convert_to_numpy=True,
+        )
+        
+        # Convert to a standard list of floats for Qdrant client
+        if hasattr(query_emb, "tolist"):
+            query_vector = query_emb[0].tolist()
+        else:
+            query_vector = list(query_emb[0])
+            
+        # Search Qdrant collection using the unified query_points API
+        search_result = self.client.query_points(
+            collection_name=self.collection_name,
+            query=query_vector,
+            limit=top_k
+        )
+        
+        # Format output as [(chunk_id, score), ...]
+        results = []
+        for hit in search_result.points:
+            chunk_id = hit.payload.get("chunk_id")
+            if chunk_id:
+                results.append((chunk_id, float(hit.score)))
+                
+        return results
+
+def create_dense_retriever(backend: str, **kwargs):
+    if backend == "faiss":
+        return FaissDenseRetriever(kwargs["index"], kwargs["chunk_ids"], kwargs["model"])
+    elif backend == "qdrant":
+        return QdrantDenseRetriever(kwargs["client"], kwargs["collection_name"], kwargs["model"], kwargs.get("chunk_ids"))
+    else:
+        raise ValueError(f"Unsupported vector store backend: {backend}")
+
 class SparseRetriever:
     def __init__(self, bm25_index, chunk_ids: List[str]):
         self.bm25 = bm25_index

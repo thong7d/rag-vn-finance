@@ -59,6 +59,12 @@ indexing:
   bm25_dir: "bm25"
   bm25_dir_colab: "/content/drive/MyDrive/rag-vn-finance/bm25"
 
+vector_store:
+  backend: "qdrant"  # "faiss" or "qdrant" - overridden by env VECTOR_STORE_BACKEND
+  qdrant:
+    local_path: "qdrant_data"
+    collection_name: "vn_finance"
+
 retrieval:
   top_k_dense: 10
   top_k_sparse: 10
