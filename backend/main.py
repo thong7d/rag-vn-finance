@@ -1,0 +1,102 @@
+"""
+main.py — FastAPI application entry point.
+
+Startup sequence (lifespan):
+  1. Download BM25 index from HuggingFace Hub
+  2. Fetch chunk metadata from Qdrant Cloud (used for text/title/url lookup)
+  3. Initialize retrieval pipeline (Qdrant client + embedding model)
+
+The backend is then ready to serve POST /api/ask with SSE streaming.
+"""
+
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+from backend.core.config import get_settings
+from backend.core.logging import setup_logger
+from backend.routers.ask import router
+from backend.services import retrieval as retrieval_service
+from backend.services.bm25_loader import load_bm25
+
+logger = setup_logger("Main")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Application lifecycle manager — runs startup/shutdown logic."""
+    settings = get_settings()
+    logger.info("=== RAG Backend Starting ===")
+
+    # Step 1: Download BM25 from HF Hub (cached after first download)
+    logger.info("Step 1/3: Loading BM25 index from HuggingFace Hub...")
+    load_bm25()  # warms up the module-level cache
+
+    # Step 2: Fetch chunk metadata from Qdrant Cloud
+    logger.info("Step 2/3: Fetching chunk metadata from Qdrant Cloud...")
+    from qdrant_client import QdrantClient
+    client = QdrantClient(url=settings.qdrant_url, api_key=settings.qdrant_api_key)
+    collection_name = f"vn_finance_{settings.chunk_strategy}"
+
+    chunk_meta: dict[str, dict] = {}
+    offset = None
+    while True:
+        result = client.scroll(
+            collection_name=collection_name,
+            limit=500,
+            offset=offset,
+            with_vectors=False,
+            with_payload=True,
+        )
+        batch, next_offset = result
+        if not batch:
+            break
+        for pt in batch:
+            cid = pt.payload.get("chunk_id", "")
+            if cid:
+                chunk_meta[cid] = {
+                    "text": pt.payload.get("text", ""),
+                    "title": pt.payload.get("title", ""),
+                    "url": pt.payload.get("url", ""),
+                }
+        if next_offset is None:
+            break
+        offset = next_offset
+
+    logger.info(f"   → Loaded metadata for {len(chunk_meta):,} chunks")
+
+    # Step 3: Initialize retrieval pipeline
+    logger.info("Step 3/3: Initializing retrieval pipeline...")
+    retrieval_service.init_retrieval(chunk_meta)
+
+    logger.info("=== RAG Backend Ready ===")
+    yield
+
+    # Shutdown
+    logger.info("=== RAG Backend Shutting Down ===")
+
+
+def create_app() -> FastAPI:
+    settings = get_settings()
+
+    app = FastAPI(
+        title="Vietnamese Financial News RAG API",
+        description="Production-grade RAG backend with 3-layer LLM fallback and SSE streaming.",
+        version="1.0.0",
+        lifespan=lifespan,
+    )
+
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.cors_origins,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+    app.include_router(router)
+    return app
+
+
+app = create_app()

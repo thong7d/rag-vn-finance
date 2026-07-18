@@ -1,0 +1,36 @@
+services:
+  - type: web
+    name: rag-vn-finance-backend
+    runtime: python
+    region: singapore          # closest to Vietnam
+    plan: free
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/health
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11"
+      # ── Secrets (set in Render Dashboard, not here) ──────────────────────────
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: MISTRAL_API_KEY
+        sync: false
+      - key: COHERE_API_KEY
+        sync: false
+      - key: HF_TOKEN
+        sync: false
+      - key: QDRANT_URL
+        sync: false
+      - key: QDRANT_API_KEY
+        sync: false
+      # ── Non-secret config ───────────────────────────────────────────────────
+      - key: HF_BM25_REPO
+        value: thong7d/rag-vn-finance-bm25
+      - key: CHUNK_STRATEGY
+        value: sentence_aware
+      # ── CORS — replace with your actual Vercel domain ───────────────────────
+      - key: ALLOWED_ORIGINS
+        value: "https://rag-finance.vercel.app,http://localhost:5173"
