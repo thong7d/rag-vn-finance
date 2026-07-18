@@ -13,10 +13,10 @@ import cohere
 import numpy as np
 from qdrant_client import QdrantClient
 
-from backend.core.config import get_settings
-from backend.core.logging import setup_logger
-from backend.services.bm25_loader import load_bm25
-from backend.services.embedding import OpenRouterEmbeddingAPI
+from core.config import get_settings
+from core.logging import setup_logger
+from services.bm25_loader import load_bm25
+from services.embedding import OpenRouterEmbeddingAPI
 
 logger = setup_logger("RetrievalService")
 

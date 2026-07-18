@@ -6,9 +6,9 @@ from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from backend.core.logging import setup_logger
-from backend.services import retrieval as retrieval_service
-from backend.services.generation import stream_answer
+from core.logging import setup_logger
+from services import retrieval as retrieval_service
+from services.generation import stream_answer
 
 logger = setup_logger("AskRouter")
 router = APIRouter()

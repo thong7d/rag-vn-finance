@@ -14,11 +14,11 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from backend.core.config import get_settings
-from backend.core.logging import setup_logger
-from backend.routers.ask import router
-from backend.services import retrieval as retrieval_service
-from backend.services.bm25_loader import load_bm25
+from core.config import get_settings
+from core.logging import setup_logger
+from routers.ask import router
+from services import retrieval as retrieval_service
+from services.bm25_loader import load_bm25
 
 logger = setup_logger("Main")
 
