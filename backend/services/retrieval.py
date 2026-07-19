@@ -15,7 +15,8 @@ from qdrant_client import QdrantClient
 
 from core.config import get_settings
 from core.logging import setup_logger
-from services.bm25_loader import load_bm25
+from services.sqlite_loader import get_sqlite_path
+import sqlite3
 from services.embedding import OpenRouterEmbeddingAPI
 
 logger = setup_logger("RetrievalService")
@@ -70,11 +71,35 @@ def _dense_retrieve(query: str, top_k: int) -> list[tuple[str, float]]:
 
 
 def _sparse_retrieve(query: str, top_k: int) -> list[tuple[str, float]]:
-    bm25_index, chunk_ids = load_bm25()
+    db_path = get_sqlite_path()
     tokens = tokenize_vi(query)
-    scores = bm25_index.get_scores(tokens)
-    top_indices = np.argsort(scores)[::-1][:top_k]
-    return [(chunk_ids[i], float(scores[i])) for i in top_indices if scores[i] > 0]
+    
+    if not tokens:
+        return []
+        
+    # FTS5 matches using OR to sum up IDF exactly like rank-bm25
+    fts_query = " OR ".join(tokens)
+    
+    conn = sqlite3.connect(db_path)
+    cur = conn.cursor()
+    
+    try:
+        # SQLite bm25() returns negative score, lower is better. We negate it to get positive score.
+        cur.execute('''
+            SELECT chunk_id, -bm25(chunks) AS score
+            FROM chunks
+            WHERE chunks MATCH ?
+            ORDER BY bm25(chunks) ASC
+            LIMIT ?
+        ''', (fts_query, top_k))
+        
+        results = [(row[0], float(row[1])) for row in cur.fetchall()]
+        return results
+    except Exception as e:
+        logger.error(f"SQLite FTS5 query failed: {e}")
+        return []
+    finally:
+        conn.close()
 
 
 def _rrf(

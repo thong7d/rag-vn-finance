@@ -2,7 +2,7 @@
 main.py — FastAPI application entry point.
 
 Startup sequence (lifespan):
-  1. Download BM25 index from HuggingFace Hub
+  1. Download SQLite FTS5 database from HuggingFace Hub
   2. Fetch chunk metadata from Qdrant Cloud (used for text/title/url lookup)
   3. Initialize retrieval pipeline (Qdrant client + embedding model)
 
@@ -18,7 +18,7 @@ from core.config import get_settings
 from core.logging import setup_logger
 from routers.ask import router
 from services import retrieval as retrieval_service
-from services.bm25_loader import load_bm25
+from services.sqlite_loader import get_sqlite_path
 
 logger = setup_logger("Main")
 
@@ -29,9 +29,9 @@ async def lifespan(app: FastAPI):
     settings = get_settings()
     logger.info("=== RAG Backend Starting ===")
 
-    # Step 1: Download BM25 from HF Hub (cached after first download)
-    logger.info("Step 1/3: Loading BM25 index from HuggingFace Hub...")
-    load_bm25()  # warms up the module-level cache
+    # Step 1: Download SQLite FTS5 DB from HF Hub (cached after first download)
+    logger.info("Step 1/3: Loading SQLite FTS5 DB from HuggingFace Hub...")
+    get_sqlite_path()  # warms up the module-level cache
 
     # Step 2: Fetch chunk metadata from Qdrant Cloud
     logger.info("Step 2/3: Fetching chunk metadata from Qdrant Cloud...")
