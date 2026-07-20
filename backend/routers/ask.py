@@ -50,7 +50,6 @@ async def ask(request: AskRequest):
         headers={
             "Cache-Control": "no-cache",
             "X-Accel-Buffering": "no",       # disable Nginx buffering on Render
-            "Access-Control-Allow-Origin": "*",
         },
     )
 
