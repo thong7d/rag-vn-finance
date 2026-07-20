@@ -96,6 +96,11 @@ def create_app() -> FastAPI:
     )
 
     app.include_router(router)
+
+    @app.get("/")
+    def root_health_check():
+        return {"status": "ok", "message": "Backend is running"}
+
     return app
 
 
