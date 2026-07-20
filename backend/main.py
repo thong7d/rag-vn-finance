@@ -33,44 +33,47 @@ async def lifespan(app: FastAPI):
     logger.info("Step 1/3: Loading SQLite FTS5 DB from HuggingFace Hub...")
     get_sqlite_path()  # warms up the module-level cache
 
-    # Step 2: Fetch chunk metadata from Qdrant Cloud
-    logger.info("Step 2/3: Fetching chunk metadata from Qdrant Cloud...")
-    from qdrant_client import QdrantClient
-    client = QdrantClient(url=settings.qdrant_url, api_key=settings.qdrant_api_key)
-    collection_name = f"vn_finance_{settings.chunk_strategy}"
+    # Step 2: Fetch chunk metadata from Qdrant Cloud IN BACKGROUND
+    logger.info("Step 2/3: Starting background task to fetch chunk metadata...")
+    import asyncio
+    
+    def fetch_metadata():
+        from qdrant_client import QdrantClient
+        client = QdrantClient(url=settings.qdrant_url, api_key=settings.qdrant_api_key)
+        collection_name = f"vn_finance_{settings.chunk_strategy}"
+        chunk_meta: dict[str, dict] = {}
+        offset = None
+        while True:
+            result = client.scroll(
+                collection_name=collection_name,
+                limit=500,
+                offset=offset,
+                with_vectors=False,
+                with_payload=True,
+            )
+            batch, next_offset = result
+            if not batch:
+                break
+            for pt in batch:
+                cid = pt.payload.get("chunk_id", "")
+                if cid:
+                    chunk_meta[cid] = {
+                        "text": pt.payload.get("text", ""),
+                        "title": pt.payload.get("title", ""),
+                        "url": pt.payload.get("url", ""),
+                    }
+            if next_offset is None:
+                break
+            offset = next_offset
 
-    chunk_meta: dict[str, dict] = {}
-    offset = None
-    while True:
-        result = client.scroll(
-            collection_name=collection_name,
-            limit=500,
-            offset=offset,
-            with_vectors=False,
-            with_payload=True,
-        )
-        batch, next_offset = result
-        if not batch:
-            break
-        for pt in batch:
-            cid = pt.payload.get("chunk_id", "")
-            if cid:
-                chunk_meta[cid] = {
-                    "text": pt.payload.get("text", ""),
-                    "title": pt.payload.get("title", ""),
-                    "url": pt.payload.get("url", ""),
-                }
-        if next_offset is None:
-            break
-        offset = next_offset
+        logger.info(f"   → Loaded metadata for {len(chunk_meta):,} chunks")
+        logger.info("Step 3/3: Initializing retrieval pipeline...")
+        retrieval_service.init_retrieval(chunk_meta)
 
-    logger.info(f"   → Loaded metadata for {len(chunk_meta):,} chunks")
+    # Chạy trên một thread riêng để hoàn toàn không block event loop
+    asyncio.create_task(asyncio.to_thread(fetch_metadata))
 
-    # Step 3: Initialize retrieval pipeline
-    logger.info("Step 3/3: Initializing retrieval pipeline...")
-    retrieval_service.init_retrieval(chunk_meta)
-
-    logger.info("=== RAG Backend Ready ===")
+    logger.info("=== RAG Backend Ready (Initializing in background) ===")
     yield
 
     # Shutdown
@@ -97,7 +100,7 @@ def create_app() -> FastAPI:
 
     app.include_router(router)
 
-    @app.get("/")
+    @app.api_route("/", methods=["GET", "HEAD"])
     def root_health_check():
         return {"status": "ok", "message": "Backend is running"}
 
