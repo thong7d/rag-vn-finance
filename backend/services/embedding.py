@@ -20,7 +20,7 @@ class OpenRouterEmbeddingAPI:
     """
 
     MODEL_NAME = "intfloat/multilingual-e5-large"
-    API_URL = f"https://api-inference.huggingface.co/models/{MODEL_NAME}"
+    API_URL = f"https://router.huggingface.co/hf-inference/models/{MODEL_NAME}"
 
     def __init__(self):
         settings = get_settings()
