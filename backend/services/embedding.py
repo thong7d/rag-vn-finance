@@ -1,6 +1,6 @@
 """
-embedding.py — OpenRouter Embedding API service.
-Ported from implementation/app.py::OpenRouterEmbeddingAPI.
+embedding.py — Hugging Face Inference API embedding service.
+Uses intfloat/multilingual-e5-large directly via HuggingFace for fast response (<1s).
 """
 
 import time
@@ -14,14 +14,17 @@ logger = setup_logger("EmbeddingService")
 
 
 class OpenRouterEmbeddingAPI:
-    """Call OpenRouter's /embeddings endpoint with intfloat/multilingual-e5-large."""
+    """
+    Embedding API service using Hugging Face Inference API.
+    Maintains class name 'OpenRouterEmbeddingAPI' for backwards compatibility with retrieval.py.
+    """
 
     MODEL_NAME = "intfloat/multilingual-e5-large"
-    API_URL = "https://openrouter.ai/api/v1/embeddings"
+    API_URL = f"https://api-inference.huggingface.co/models/{MODEL_NAME}"
 
     def __init__(self):
         settings = get_settings()
-        self.api_key = settings.openrouter_api_key
+        self.api_key = settings.hf_token
 
     def encode(self, texts: list[str] | str, **_kwargs) -> np.ndarray:
         if isinstance(texts, str):
@@ -34,18 +37,28 @@ class OpenRouterEmbeddingAPI:
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
         }
-        payload = {"model": self.MODEL_NAME, "input": prefixed}
+        payload = {
+            "inputs": prefixed,
+            "options": {"wait_for_model": True}
+        }
 
         t0 = time.time()
-        resp = requests.post(self.API_URL, headers=headers, json=payload, timeout=15)
+        resp = requests.post(self.API_URL, headers=headers, json=payload, timeout=30)
         latency = time.time() - t0
 
         if resp.status_code == 200:
-            data = resp.json()["data"]
-            embeddings = [item["embedding"] for item in data]
-            emb_array = np.array(embeddings, dtype=np.float32)
-            logger.info(f"Embedding OK | {len(texts)} texts | {latency:.2f}s | shape={emb_array.shape}")
+            raw_data = resp.json()
+            emb_array = np.array(raw_data, dtype=np.float32)
+
+            # If 3D (batch, seq_len, 1024), perform mean pooling over token embeddings
+            if emb_array.ndim == 3:
+                emb_array = emb_array.mean(axis=1)
+            elif emb_array.ndim == 1:
+                emb_array = np.expand_dims(emb_array, axis=0)
+
+            logger.info(f"Embedding OK (HF) | {len(texts)} texts | {latency:.2f}s | shape={emb_array.shape}")
             return emb_array
         else:
-            logger.error(f"OpenRouter embedding error: {resp.status_code} — {resp.text}")
-            raise RuntimeError(f"OpenRouter API error {resp.status_code}: {resp.text}")
+            logger.error(f"Hugging Face embedding error: {resp.status_code} — {resp.text}")
+            raise RuntimeError(f"HF Inference API error {resp.status_code}: {resp.text}")
+
