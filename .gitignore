@@ -1,11 +1,15 @@
 # ============================================================
 # .gitignore — Vietnamese Financial News RAG System
+# microservices-migration branch
 # ============================================================
 
-# API keys and secrets
+# ── Secrets ───────────────────────────────────────────────────────────────────
 .env
+!.env.example
+backend/.env
+pipeline/.env
 
-# Python
+# ── Python ────────────────────────────────────────────────────────────────────
 __pycache__/
 *.py[cod]
 *.pyo
@@ -15,85 +19,72 @@ __pycache__/
 dist/
 build/
 *.egg
+*.so
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
 
-# Jupyter
+# ── Virtual environments ───────────────────────────────────────────────────────
+.venv/
+venv/
+env/
+
+# ── Jupyter ───────────────────────────────────────────────────────────────────
 .ipynb_checkpoints/
 *.ipynb_checkpoints
 
-# Data files (too large for git — stored on Drive)
-data/
-data/raw/
-data/processed/*.parquet
-data/processed/*.json
-data/chunks/
-embeddings/
-# Ignore heavy index files for Github (already uploaded to Google Drive)
-indexes/
-bm25/
-synthetic_qa/*.parquet
-synthetic_qa/*.jsonl
-synthetic_qa/*.json
-evaluation/*.csv
-evaluation/*.jsonl
-evaluation/*.json
-checkpoints/
+# ── Node / Frontend ───────────────────────────────────────────────────────────
+node_modules/
+frontend/dist/
+frontend/build/
+frontend/.env.local
+frontend/.env.production
 
-# Keep directory structure markers
-!data/raw/.gitkeep
-!data/processed/.gitkeep
-!data/processed/eda_plots/.gitkeep
-!data/chunks/fixed_size/.gitkeep
-!data/chunks/sentence_aware/.gitkeep
-!data/chunks/article_level/.gitkeep
-!embeddings/fixed_size/.gitkeep
-!embeddings/sentence_aware/.gitkeep
-!embeddings/article_level/.gitkeep
-!indexes/fixed_size/.gitkeep
-!indexes/sentence_aware/.gitkeep
-!indexes/article_level/.gitkeep
-!bm25/fixed_size/.gitkeep
-!bm25/sentence_aware/.gitkeep
-!bm25/article_level/.gitkeep
-!synthetic_qa/.gitkeep
-!evaluation/.gitkeep
-!checkpoints/.gitkeep
+# ── Pipeline: heavy data & cache files (stored on HuggingFace Hub / GDrive) ───
+pipeline/data/
+pipeline/bm25/
+pipeline/indexes/
+pipeline/qdrant_data/
+pipeline/scratch/
+pipeline/__pycache__/
+pipeline/src/__pycache__/
+pipeline/error.log
+pipeline/data/bm25_sqlite/
+pipeline/.git
 
-# Hugging Face Spaces clone
-hf_space/
+# ── Evaluation & Synthetic QA output (parquet/jsonl generated files) ──────────
+pipeline/evaluation/*.csv
+pipeline/evaluation/*.jsonl
+pipeline/evaluation/*.json
+pipeline/evaluation/*.parquet
+pipeline/evaluation/**/*.parquet
+pipeline/synthetic_qa/*.parquet
+pipeline/synthetic_qa/*.jsonl
+pipeline/synthetic_qa/*.json
 
-# OS artifacts
+# ── OS artifacts ──────────────────────────────────────────────────────────────
 .DS_Store
 Thumbs.db
 desktop.ini
 
-# IDEs
+# ── IDEs ──────────────────────────────────────────────────────────────────────
 .vscode/
 .idea/
 *.swp
 *.swo
+*.code-workspace
 
-# Large model files
+# ── Large model / index files ─────────────────────────────────────────────────
 *.bin
 *.safetensors
 *.ot
-
-# FAISS index files must be pushed to Hugging Face Spaces via Git LFS, so do not ignore *.faiss
-# *.faiss
-
-# Virtualization files ignored for clean repository
-Dockerfile
-docker-compose.yml
-
-# Qdrant data files
-qdrant_data.zip
 qdrant_data/
+qdrant_data.zip
 
-# Large parquet results
-evaluation/*.parquet
-evaluation/**/*.parquet
-
-# Logs
+# ── Logs ─────────────────────────────────────────────────────────────────────
 *.log
+logs/
 
+# ── Misc ──────────────────────────────────────────────────────────────────────
 support_implementation/
-implementation/
+hf_space/

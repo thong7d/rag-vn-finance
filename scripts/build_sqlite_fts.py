@@ -96,14 +96,14 @@ if __name__ == "__main__":
     
     # Đường dẫn cố định dựa trên cấu trúc thư mục
     base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-    parquet_path = os.path.join(base_dir, "implementation", "data", "chunks", args.strategy, "chunks.parquet")
+    parquet_path = os.path.join(base_dir, "pipeline", "data", "chunks", args.strategy, "chunks.parquet")
     
     if not os.path.exists(parquet_path):
         print(f"❌ Không tìm thấy file {parquet_path}. Vui lòng chạy pipeline chunking trước.")
         exit(1)
         
     # Tạo thư mục output nếu chưa có
-    output_dir = os.path.join(base_dir, "implementation", "data", "bm25_sqlite", args.strategy)
+    output_dir = os.path.join(base_dir, "pipeline", "data", "bm25_sqlite", args.strategy)
     os.makedirs(output_dir, exist_ok=True)
     db_path = os.path.join(output_dir, "bm25.db")
     

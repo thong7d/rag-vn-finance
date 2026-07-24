@@ -41,7 +41,7 @@ def main():
         sys.exit(1)
 
     strategy = args.strategy
-    bm25_dir = ROOT / "implementation" / "bm25" / strategy
+    bm25_dir = ROOT / "pipeline" / "bm25" / strategy
 
     pkl_file = bm25_dir / "bm25_index.pkl"
     chunk_ids_file = bm25_dir / "chunk_ids.json"

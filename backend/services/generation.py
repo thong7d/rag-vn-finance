@@ -21,7 +21,7 @@ from core.logging import setup_logger
 
 logger = setup_logger("GenerationService")
 
-# ── System Prompt (mirrors implementation/src/generation.py) ──────────────────
+# ── System Prompt (mirrors pipeline/src/generation.py) ──────────────────
 RAG_SYSTEM_PROMPT = """Bạn là một chuyên viên phân tích tài chính chuyên nghiệp.
 Nhiệm vụ của bạn là trả lời câu hỏi của người dùng **dựa hoàn toàn** vào các đoạn ngữ cảnh báo chí tài chính được cung cấp bên dưới.
 

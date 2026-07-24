@@ -6,7 +6,7 @@ import StatusBar from "./components/StatusBar";
 import { useChat } from "./hooks/useChat";
 
 export default function App() {
-  const { answer, sources, isLoading, status, activeModel, error, submit } = useChat();
+  const { answer, sources, isLoading, status, activeModel, error, progressStep, etaRemaining, submit } = useChat();
 
   return (
     <>
@@ -54,7 +54,7 @@ export default function App() {
           <ChatInput onSubmit={submit} isLoading={isLoading} />
 
           {/* Status */}
-          <StatusBar status={status} error={error} />
+          <StatusBar status={status} error={error} progressStep={progressStep} etaRemaining={etaRemaining} activeModel={activeModel} />
 
           {/* Answer */}
           {(answer || isLoading) && (

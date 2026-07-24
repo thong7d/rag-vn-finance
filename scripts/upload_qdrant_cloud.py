@@ -2,10 +2,10 @@
 upload_qdrant_cloud.py — Upload local Qdrant snapshot to Qdrant Cloud.
 
 Usage:
-    python scripts/upload_qdrant_cloud.py \\
-        --local-path implementation/qdrant_data/sentence_aware \\
-        --strategy sentence_aware \\
-        --cloud-url https://YOUR_CLUSTER.qdrant.io \\
+    python scripts/upload_qdrant_cloud.py \
+        --local-path pipeline/qdrant_data/sentence_aware \
+        --strategy sentence_aware \
+        --cloud-url https://YOUR_CLUSTER.qdrant.io \
         --api-key YOUR_QDRANT_API_KEY
 
 Or set env vars QDRANT_URL and QDRANT_API_KEY, then:
@@ -19,7 +19,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "implementation"))
+sys.path.insert(0, str(ROOT / "pipeline"))
 
 from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, VectorParams, PointStruct
@@ -31,7 +31,7 @@ import pandas as pd
 def parse_args():
     parser = argparse.ArgumentParser(description="Upload local Qdrant data to Qdrant Cloud")
     parser.add_argument("--local-path", type=str, default=None,
-                        help="Path to local Qdrant directory (e.g. implementation/qdrant_data/sentence_aware)")
+                        help="Path to local Qdrant directory (e.g. pipeline/qdrant_data/sentence_aware)")
     parser.add_argument("--strategy", type=str, default="sentence_aware",
                         choices=["fixed_size", "sentence_aware", "article_level"],
                         help="Chunking strategy (used to name the Cloud collection)")
@@ -65,7 +65,7 @@ def main():
     if args.local_path:
         local_dir = Path(args.local_path)
     else:
-        local_dir = ROOT / "implementation" / "qdrant_data" / strategy
+        local_dir = ROOT / "pipeline" / "qdrant_data" / strategy
 
     if not local_dir.exists():
         print(f"❌ ERROR: Local Qdrant directory not found: {local_dir}")
@@ -73,7 +73,7 @@ def main():
         sys.exit(1)
 
     # ── Load metadata & vectors from indexes/ (same source as app.py) ─────────
-    indexes_dir = ROOT / "implementation" / "indexes" / strategy
+    indexes_dir = ROOT / "pipeline" / "indexes" / strategy
     if not indexes_dir.exists():
         print(f"❌ ERROR: Indexes directory not found: {indexes_dir}")
         sys.exit(1)

@@ -437,9 +437,125 @@ body {
   border-top: 1px solid var(--border);
 }
 
-/* ── Responsive ──────────────────────────────────────────── */
+/* ── Responsive ──────────────────────────────────────────────────────── */
 @media (max-width: 640px) {
   .app-container { padding: 0 1rem; }
   .hero-section { padding: 2rem 0 1.5rem; }
   .hero-title { font-size: 1.4rem; }
 }
+
+/* ── Pipeline Progress ───────────────────────────────────────────────── */
+.pipeline-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+}
+
+.pipeline-chips {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex: 1;
+  flex-wrap: wrap;
+}
+
+.pipeline-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+  padding: 0.1rem 0.55rem;
+  border-radius: 99px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  border: 1px solid transparent;
+  transition: all 0.35s ease;
+}
+
+.pipeline-chip--pending {
+  color: var(--text-muted);
+  border-color: var(--border);
+  background: transparent;
+}
+
+.pipeline-chip--active {
+  color: var(--accent-blue);
+  border-color: rgba(59, 130, 246, 0.45);
+  background: rgba(59, 130, 246, 0.1);
+  animation: chip-pulse 1.8s ease-in-out infinite;
+}
+
+.pipeline-chip--done {
+  color: var(--accent-green);
+  border-color: rgba(16, 185, 129, 0.3);
+  background: rgba(16, 185, 129, 0.07);
+}
+
+@keyframes chip-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.25); }
+  50%       { box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.08); }
+}
+
+/* ── ETA Countdown Badge ─────────────────────────────────────────────── */
+.eta-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 34px;
+  padding: 0.1rem 0.45rem;
+  border-radius: 99px;
+  background: rgba(59, 130, 246, 0.12);
+  border: 1px solid rgba(59, 130, 246, 0.28);
+  color: var(--accent-blue);
+  font-size: 0.7rem;
+  font-family: var(--font-mono);
+  font-weight: 700;
+  flex-shrink: 0;
+  transition: color 0.4s ease, background 0.4s ease;
+}
+
+/* ── Pipeline step description label ─────────────────────────────────── */
+.pipeline-label {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  padding-left: 1.5rem;    /* indent to align below spinner */
+  margin-top: 0.15rem;
+  line-height: 1.4;
+}
+
+/* ── Error detail components ─────────────────────────────────────────── */
+.status-bar.error {
+  align-items: flex-start;
+}
+
+.error-icon {
+  flex-shrink: 0;
+  font-size: 0.95rem;
+  margin-top: 0.05rem;
+}
+
+.error-text {
+  flex: 1;
+  line-height: 1.55;
+  word-break: break-word;
+}
+
+.error-toggle {
+  background: none;
+  border: none;
+  color: var(--accent-red);
+  font-size: 0.7rem;
+  font-family: var(--font-sans);
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  padding: 0.1rem 0.3rem;
+  border-radius: 4px;
+  flex-shrink: 0;
+  opacity: 0.75;
+  transition: opacity 0.2s;
+  text-decoration: underline;
+}
+
+.error-toggle:hover { opacity: 1; }

@@ -28,7 +28,7 @@ _chunk_meta: dict[str, dict] = {}  # chunk_id → {text, title, url}
 
 
 def tokenize_vi(text: str) -> list[str]:
-    """Whitespace-based Vietnamese tokenizer (mirrors implementation/src/indexing.py)."""
+    """Whitespace-based Vietnamese tokenizer (mirrors pipeline/src/indexing.py)."""
     text = str(text).lower()
     text = re.sub(r"[^\w\s]", " ", text)
     return [t for t in text.split() if len(t) > 1]
@@ -174,4 +174,39 @@ def retrieve(query: str) -> list[dict[str, Any]]:
                 "score": round(score, 4),
             })
 
+    return results
+
+
+# ── Public step functions (for async pipeline orchestration in ask.py) ────────
+
+def dense_retrieve(query: str, top_k: int) -> list[tuple[str, float]]:
+    """Public wrapper — dense vector search via Qdrant + HF embedding."""
+    return _dense_retrieve(query, top_k)
+
+
+def sparse_retrieve(query: str, top_k: int) -> list[tuple[str, float]]:
+    """Public wrapper — BM25 keyword search via SQLite FTS5."""
+    return _sparse_retrieve(query, top_k)
+
+
+def fuse_and_rerank(query: str, dense: list, sparse: list) -> list[dict[str, Any]]:
+    """
+    Public — RRF fusion + Cohere Rerank + build result dicts.
+    Called by ask.py after emitting retrieval progress events.
+    """
+    settings = get_settings()
+    fused = _rrf(dense, sparse, k=settings.rrf_k, top_n=settings.top_k_hybrid)
+    reranked = _rerank(query, fused, top_n=settings.top_k_rerank)
+    results = []
+    for cid, score in reranked:
+        meta = _chunk_meta.get(cid, {})
+        text = meta.get("text", "")
+        if text.strip():
+            results.append({
+                "chunk_id": cid,
+                "text": text,
+                "title": meta.get("title", ""),
+                "url": meta.get("url", ""),
+                "score": round(score, 4),
+            })
     return results
