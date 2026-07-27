@@ -1,13 +1,16 @@
 import { useState, useRef, useEffect } from "react";
 
 /**
- * ChatInput — question text area + submit button.
+ * ChatInput — question text area + submit button + sample question chips.
  *
  * Props:
- *   onSubmit(question: string) - called when user submits
+ *   onSubmit(question: string, decompose: boolean) - called when user submits
  *   isLoading: bool
+ *   showSamples: bool - whether to show sample question chips
+ *   decompose: bool - current decompose toggle state (passed from parent)
+ *   onToggleDecompose: () => void - callback to toggle decompose mode
  */
-export default function ChatInput({ onSubmit, isLoading }) {
+export default function ChatInput({ onSubmit, isLoading, showSamples = true, decompose = false, onToggleDecompose }) {
   const [value, setValue] = useState("");
   const textareaRef = useRef(null);
 
@@ -22,7 +25,7 @@ export default function ChatInput({ onSubmit, isLoading }) {
   const handleSubmit = () => {
     const q = value.trim();
     if (!q || isLoading) return;
-    onSubmit(q);
+    onSubmit(q, decompose);
     setValue("");
   };
 
@@ -33,6 +36,11 @@ export default function ChatInput({ onSubmit, isLoading }) {
     }
   };
 
+  const handleSampleClick = (question) => {
+    if (isLoading) return;
+    onSubmit(question, decompose);
+  };
+
   const PLACEHOLDER_EXAMPLES = [
     "Lợi nhuận của Vietcombank quý 1/2023 là bao nhiêu?",
     "Tình hình thị trường bất động sản 2024 như thế nào?",
@@ -40,7 +48,7 @@ export default function ChatInput({ onSubmit, isLoading }) {
   ];
 
   return (
-    <div className="chat-input-wrapper">
+    <div className={`chat-input-wrapper${decompose ? " chat-input-wrapper--decompose" : ""}`}>
       <label className="chat-input-label" htmlFor="chat-input">
         📊 Câu hỏi tài chính
       </label>
@@ -57,9 +65,21 @@ export default function ChatInput({ onSubmit, isLoading }) {
         aria-label="Nhập câu hỏi về tài chính Việt Nam"
       />
       <div className="chat-input-footer">
-        <span className="char-count">
-          {value.length > 0 ? `${value.length} ký tự · Enter để gửi` : "Shift+Enter để xuống dòng"}
-        </span>
+        {/* Deep Analysis toggle */}
+        <div className="decompose-toggle-area">
+          <button
+            type="button"
+            className={`decompose-toggle${decompose ? " decompose-toggle--active" : ""}`}
+            onClick={onToggleDecompose}
+            aria-pressed={decompose}
+            aria-label="Toggle deep analysis mode"
+          >
+            <span className="toggle-track">
+              <span className="toggle-thumb" />
+            </span>
+            <span className="toggle-label">🔍 Deep Analysis</span>
+          </button>
+        </div>
         <button
           className="submit-btn"
           onClick={handleSubmit}
@@ -77,6 +97,22 @@ export default function ChatInput({ onSubmit, isLoading }) {
           )}
         </button>
       </div>
+
+      {/* Sample question chips — only shown in idle state */}
+      {showSamples && !isLoading && (
+        <div className="sample-questions" aria-label="Sample questions">
+          {PLACEHOLDER_EXAMPLES.map((q, i) => (
+            <button
+              key={i}
+              className="sample-chip"
+              onClick={() => handleSampleClick(q)}
+              type="button"
+            >
+              {q}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

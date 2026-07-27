@@ -13,10 +13,13 @@ import cohere
 import numpy as np
 from qdrant_client import QdrantClient
 
+import sqlite3
+import time
+
 from core.config import get_settings
 from core.logging import setup_logger
+from core.metrics import rag_retrieval_latency_seconds
 from services.sqlite_loader import get_sqlite_path
-import sqlite3
 from services.embedding import OpenRouterEmbeddingAPI
 
 logger = setup_logger("RetrievalService")
@@ -59,6 +62,7 @@ def init_retrieval(chunk_meta: dict[str, dict]):
 def _dense_retrieve(query: str, top_k: int) -> list[tuple[str, float]]:
     settings = get_settings()
     collection_name = f"vn_finance_{settings.chunk_strategy}"
+    t0 = time.perf_counter()
 
     query_emb = _embedding_model.encode([query])[0].tolist()
 
@@ -67,10 +71,13 @@ def _dense_retrieve(query: str, top_k: int) -> list[tuple[str, float]]:
         query=query_emb,
         limit=top_k,
     )
+    
+    rag_retrieval_latency_seconds.labels(type="dense").observe(time.perf_counter() - t0)
     return [(hit.payload["chunk_id"], float(hit.score)) for hit in results.points if "chunk_id" in hit.payload]
 
 
 def _sparse_retrieve(query: str, top_k: int) -> list[tuple[str, float]]:
+    t0 = time.perf_counter()
     db_path = get_sqlite_path()
     tokens = tokenize_vi(query)
     
@@ -94,6 +101,8 @@ def _sparse_retrieve(query: str, top_k: int) -> list[tuple[str, float]]:
         ''', (fts_query, top_k))
         
         results = [(row[0], float(row[1])) for row in cur.fetchall()]
+        
+        rag_retrieval_latency_seconds.labels(type="sparse").observe(time.perf_counter() - t0)
         return results
     except Exception as e:
         logger.error(f"SQLite FTS5 query failed: {e}")
@@ -118,6 +127,7 @@ def _rrf(
 
 def _rerank(query: str, candidates: list[tuple[str, float]], top_n: int) -> list[tuple[str, float]]:
     settings = get_settings()
+    t0 = time.perf_counter()
 
     docs = [_chunk_meta.get(cid, {}).get("text", "") for cid, _ in candidates]
     valid = [(c, d) for c, d in zip(candidates, docs) if d.strip()]
@@ -135,6 +145,8 @@ def _rerank(query: str, candidates: list[tuple[str, float]], top_n: int) -> list
         )
         reranked = [(valid_candidates[r.index][0], r.relevance_score) for r in resp.results]
         logger.info(f"Cohere rerank OK — top-{top_n} from {len(candidates)} candidates")
+        
+        rag_retrieval_latency_seconds.labels(type="rerank").observe(time.perf_counter() - t0)
         return reranked
     except Exception as e:
         logger.warning(f"Cohere rerank failed ({e}), falling back to RRF top-{top_n}")

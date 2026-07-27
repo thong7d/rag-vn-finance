@@ -1,0 +1,6 @@
+notebooks/
+evaluation/
+synthetic_qa/
+app/
+.env.example
+requirements_local.txt

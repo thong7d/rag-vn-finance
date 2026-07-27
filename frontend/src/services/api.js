@@ -9,19 +9,23 @@ const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:8000";
  * Open an SSE stream for a question.
  * Returns an EventSource-compatible fetch stream wrapped as an async generator.
  *
+ * @param {string} question - The user's question
+ * @param {boolean} decompose - Whether to enable query decomposition
+ *
  * Usage:
- *   for await (const event of streamAsk(question)) {
+ *   for await (const event of streamAsk(question, true)) {
+ *     if (event.type === "decomposition") ... // sub-queries
  *     if (event.type === "sources") ...
  *     if (event.type === "token")   ...
  *     if (event.type === "done")    ...
  *     if (event.type === "error")   ...
  *   }
  */
-export async function* streamAsk(question) {
+export async function* streamAsk(question, decompose = false) {
   const response = await fetch(`${API_BASE}/api/ask`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ question }),
+    body: JSON.stringify({ question, decompose }),
   });
 
   if (!response.ok) {

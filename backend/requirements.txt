@@ -7,3 +7,5 @@ cohere==5.11.2
 huggingface-hub>=0.24.0
 numpy>=1.26.0
 requests>=2.32.0
+prometheus-fastapi-instrumentator>=7.0.0
+prometheus-client>=0.21.0

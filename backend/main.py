@@ -13,6 +13,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from prometheus_fastapi_instrumentator import Instrumentator
 
 from core.config import get_settings
 from core.logging import setup_logger
@@ -99,6 +100,8 @@ def create_app() -> FastAPI:
     )
 
     app.include_router(router)
+
+    Instrumentator().instrument(app).expose(app, endpoint="/metrics")
 
     @app.api_route("/", methods=["GET", "HEAD"])
     def root_health_check():

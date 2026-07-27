@@ -1,0 +1,32 @@
+name: Nightly Regression
+
+on:
+  schedule:
+    - cron: "0 2 * * *"   # 2:00 UTC daily = 9:00 AM Vietnam
+  workflow_dispatch: {}    # Manual trigger
+
+jobs:
+  regression:
+    name: Full Regression Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      
+      - name: Install dependencies
+        run: pip install requests
+        
+      - name: Run Regression Test
+        run: python tests/regression_test.py
+        env:
+          BACKEND_URL: ${{ secrets.RENDER_BACKEND_URL }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          
+      - name: Upload Regression Report
+        uses: actions/upload-artifact@v4
+        if: always() # Upload even if test fails
+        with:
+          name: regression-report
+          path: tests/regression_report.csv

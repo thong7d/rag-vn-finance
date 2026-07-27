@@ -9,9 +9,9 @@ import requests
 
 from core.config import get_settings
 from core.logging import setup_logger
+from core.metrics import rag_embedding_latency_seconds
 
 logger = setup_logger("EmbeddingService")
-
 
 class OpenRouterEmbeddingAPI:
     """
@@ -45,6 +45,8 @@ class OpenRouterEmbeddingAPI:
         t0 = time.time()
         resp = requests.post(self.API_URL, headers=headers, json=payload, timeout=30)
         latency = time.time() - t0
+        
+        rag_embedding_latency_seconds.observe(latency)
 
         if resp.status_code == 200:
             raw_data = resp.json()

@@ -1,0 +1,65 @@
+{
+  "title": "RAG Finance VN - Observability",
+  "timezone": "browser",
+  "panels": [
+    {
+      "type": "timeseries",
+      "title": "API Request Rate (req/min)",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "expr": "rate(rag_requests_total[1m])",
+          "legendFormat": "{{endpoint}} - {{status}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "End-to-End Latency",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m]))",
+          "legendFormat": "P95 Latency"
+        }
+      ]
+    },
+    {
+      "type": "barchart",
+      "title": "Pipeline Step Latency",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "targets": [
+        {
+          "expr": "rate(rag_embedding_latency_seconds_sum[5m]) / rate(rag_embedding_latency_seconds_count[5m])",
+          "legendFormat": "Embedding"
+        },
+        {
+          "expr": "rate(rag_retrieval_latency_seconds_sum[5m]) / rate(rag_retrieval_latency_seconds_count[5m])",
+          "legendFormat": "Retrieval - {{type}}"
+        }
+      ]
+    },
+    {
+      "type": "piechart",
+      "title": "LLM Usage & Fallbacks",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "targets": [
+        {
+          "expr": "rate(rag_generation_latency_seconds_count[1h])",
+          "legendFormat": "{{model}}"
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Decomposition Usage Rate",
+      "gridPos": { "h": 4, "w": 12, "x": 0, "y": 16 },
+      "targets": [
+        {
+          "expr": "sum(rate(rag_decomposition_total[1h])) / sum(rate(rag_requests_total{endpoint=\"/api/ask\"}[1h]))",
+          "legendFormat": "Usage %"
+        }
+      ]
+    }
+  ]
+}

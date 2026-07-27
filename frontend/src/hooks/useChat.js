@@ -13,7 +13,8 @@ import { streamAsk } from "../services/api";
  *   error         - error message if status === "error"
  *   progressStep  - { step, label, eta_s } | null — current pipeline step
  *   etaRemaining  - countdown seconds remaining for current step
- *   submit(q)     - async function to start a new query
+ *   subQueries    - string[] — decomposed sub-queries (empty if decompose=false)
+ *   submit(q, decompose)  - async function to start a new query
  *   reset()       - clear all state
  */
 export function useChat() {
@@ -25,6 +26,7 @@ export function useChat() {
   const [error, setError] = useState("");
   const [progressStep, setProgressStep] = useState(null);
   const [etaRemaining, setEtaRemaining] = useState(0);
+  const [subQueries, setSubQueries] = useState([]);
 
   const abortRef = useRef(false);
   const etaIntervalRef = useRef(null);
@@ -68,10 +70,11 @@ export function useChat() {
     setError("");
     setProgressStep(null);
     setEtaRemaining(0);
+    setSubQueries([]);
   }, []);
 
   const submit = useCallback(
-    async (question) => {
+    async (question, decompose = false) => {
       if (!question.trim() || isLoading) return;
 
       // Reset state for new query
@@ -82,11 +85,12 @@ export function useChat() {
       setActiveModel("");
       setProgressStep(null);
       setEtaRemaining(0);
+      setSubQueries([]);
       setIsLoading(true);
       setStatus("retrieving");
 
       try {
-        for await (const event of streamAsk(question)) {
+        for await (const event of streamAsk(question, decompose)) {
           if (abortRef.current) break;
 
           switch (event.type) {
@@ -96,6 +100,11 @@ export function useChat() {
               startCountdown(event.data.eta_s || 0);
               break;
             }
+
+            case "decomposition":
+              // Deep analysis sub-queries received
+              setSubQueries(event.data.sub_queries || []);
+              break;
 
             case "sources":
               stopCountdown();
@@ -150,6 +159,7 @@ export function useChat() {
     error,
     progressStep,
     etaRemaining,
+    subQueries,
     submit,
     reset,
   };

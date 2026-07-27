@@ -1,12 +1,26 @@
+import { useState } from "react";
 import "./styles/index.css";
 import ChatInput from "./components/ChatInput";
 import ChatMessage from "./components/ChatMessage";
+import DecompositionPanel from "./components/DecompositionPanel";
 import SourceCard from "./components/SourceCard";
 import StatusBar from "./components/StatusBar";
 import { useChat } from "./hooks/useChat";
 
 export default function App() {
-  const { answer, sources, isLoading, status, activeModel, error, progressStep, etaRemaining, submit } = useChat();
+  const {
+    answer, sources, isLoading, status, activeModel, error,
+    progressStep, etaRemaining, subQueries, submit,
+  } = useChat();
+
+  const [decompose, setDecompose] = useState(false);
+
+  // Sample chips only visible when idle (no answer, no loading)
+  const showSamples = status === "idle" && !answer && !isLoading;
+
+  const handleSubmit = (question, decomp) => {
+    submit(question, decomp);
+  };
 
   return (
     <>
@@ -50,11 +64,22 @@ export default function App() {
       {/* ── Main ── */}
       <main className="main-content">
         <div className="app-container">
-          {/* Input */}
-          <ChatInput onSubmit={submit} isLoading={isLoading} />
+          {/* Input + Sample Chips + Decompose Toggle */}
+          <ChatInput
+            onSubmit={handleSubmit}
+            isLoading={isLoading}
+            showSamples={showSamples}
+            decompose={decompose}
+            onToggleDecompose={() => setDecompose((v) => !v)}
+          />
 
           {/* Status */}
           <StatusBar status={status} error={error} progressStep={progressStep} etaRemaining={etaRemaining} activeModel={activeModel} />
+
+          {/* Decomposition Panel (shown when deep analysis is active) */}
+          {subQueries && subQueries.length > 0 && (
+            <DecompositionPanel subQueries={subQueries} isStreaming={status === "streaming" || status === "done"} />
+          )}
 
           {/* Answer */}
           {(answer || isLoading) && (

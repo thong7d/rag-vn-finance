@@ -18,6 +18,7 @@ from openai import AsyncOpenAI
 
 from core.config import get_settings
 from core.logging import setup_logger
+from core.metrics import rag_generation_latency_seconds, rag_fallback_total
 
 logger = setup_logger("GenerationService")
 
@@ -95,11 +96,19 @@ async def stream_answer(question: str, sources: list[dict]) -> AsyncGenerator[st
 
     full_answer = ""
     last_error = ""
+    previous_layer = None
 
     for layer in layers:
+        if previous_layer:
+            rag_fallback_total.labels(from_model=previous_layer, to_model=layer["name"]).inc()
+            
+        previous_layer = layer["name"]
+        
         try:
             logger.info(f"Trying {layer['name']} ({layer['model']})...")
             client = AsyncOpenAI(base_url=layer["base_url"], api_key=layer["api_key"])
+            
+            t0 = time.perf_counter()
 
             stream = await client.chat.completions.create(
                 model=layer["model"],
@@ -120,6 +129,7 @@ async def stream_answer(question: str, sources: list[dict]) -> AsyncGenerator[st
                     yield _sse("token", {"token": delta, "model": layer["name"]})
 
             if full_answer.strip():
+                rag_generation_latency_seconds.labels(model=layer["name"]).observe(time.perf_counter() - t0)
                 yield _sse("done", {"full_answer": full_answer, "model": layer["name"]})
                 logger.info(f"{layer['name']} succeeded — {len(full_answer)} chars")
                 return

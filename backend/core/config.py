@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     # ── API Keys ─────────────────────────────────────────────────────────────
     openrouter_api_key: str
     gemini_api_key: str
+    gemini_api_key_2: str | None = None
     mistral_api_key: str
     cohere_api_key: str
     hf_token: str
@@ -31,6 +32,9 @@ class Settings(BaseSettings):
     # ── Generation ───────────────────────────────────────────────────────────
     generation_max_tokens: int = 1024
     generation_temperature: float = 0.2
+
+    # ── Query Decomposition ──────────────────────────────────────────────────
+    decompose_max_subqueries: int = 3
 
     # ── CORS ─────────────────────────────────────────────────────────────────
     # Comma-separated list; set to your Vercel domain on production

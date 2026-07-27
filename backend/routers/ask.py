@@ -2,13 +2,14 @@
 ask.py — FastAPI router for POST /api/ask and GET /api/health.
 
 Pipeline (async orchestration with SSE progress events):
-  1. event: progress  {step: "embedding",     label: ..., eta_s: 2}
-  2. dense_retrieve()  — HF Inference API + Qdrant
-  3. event: progress  {step: "sparse_search", label: ..., eta_s: 1}
-  4. sparse_retrieve() — SQLite FTS5 BM25
-  5. event: progress  {step: "rerank",        label: ..., eta_s: 3}
-  6. fuse_and_rerank() — RRF + Cohere Rerank
-  7. stream_answer()  — sources → token × N → done
+  1. [If decompose] event: decomposition {sub_queries: [...]}
+  2. event: progress  {step: "embedding",     label: ..., eta_s: 2}
+  3. dense_retrieve()  — HF Inference API + Qdrant
+  4. event: progress  {step: "sparse_search", label: ..., eta_s: 1}
+  5. sparse_retrieve() — SQLite FTS5 BM25
+  6. event: progress  {step: "rerank",        label: ..., eta_s: 3}
+  7. fuse_and_rerank() — RRF + Cohere Rerank
+  8. stream_answer()  — sources → token × N → done
 
 On any step failure:
   event: error {message: str (user-friendly VN), detail: str (raw)}
@@ -24,6 +25,7 @@ from pydantic import BaseModel
 from core.config import get_settings
 from core.logging import setup_logger
 from services import retrieval as retrieval_service
+from services.decomposer import decompose_query
 from services.generation import stream_answer
 
 logger = setup_logger("AskRouter")
@@ -56,29 +58,52 @@ def _classify_error(e: Exception) -> str:
 
 # ── Main Pipeline Generator ───────────────────────────────────────────────────
 
-async def _run_pipeline(question: str):
+async def _run_pipeline(question: str, decompose: bool = False):
     """
     Full async RAG pipeline as an SSE generator.
 
     Event sequence:
-      progress (embedding) → progress (sparse_search) → progress (rerank)
+      [decomposition] → progress (embedding) → progress (sparse_search) → progress (rerank)
       → sources → token × N → done
       → error (on failure)
     """
     settings = get_settings()
 
+    # ── Step 0 (optional): Query Decomposition ─────────────────────────────
+    queries = [question]  # default: single query
+    if decompose:
+        yield _sse("progress", {
+            "step": "decompose",
+            "label": "Đang phân tích câu hỏi phức hợp...",
+            "eta_s": 3,
+        })
+        try:
+            sub_queries = await asyncio.to_thread(decompose_query, question)
+            queries = sub_queries
+            yield _sse("decomposition", {
+                "original": question,
+                "sub_queries": sub_queries,
+            })
+        except Exception as e:
+            logger.warning(f"Decomposition failed, using original question: {e}")
+            queries = [question]
+
     # ── Step 1: Dense retrieval (includes HF embedding + Qdrant search) ──────
     yield _sse("progress", {
         "step": "embedding",
-        "label": "Đang vector hóa câu hỏi...",
-        "eta_s": 2,
+        "label": f"Đang vector hóa {'câu hỏi' if len(queries) == 1 else f'{len(queries)} sub-queries'}...",
+        "eta_s": 2 * len(queries),
     })
+
+    all_dense = []
     try:
-        dense_results = await asyncio.to_thread(
-            retrieval_service.dense_retrieve,
-            question,
-            settings.top_k_hybrid,
-        )
+        for q in queries:
+            dense = await asyncio.to_thread(
+                retrieval_service.dense_retrieve,
+                q,
+                settings.top_k_hybrid,
+            )
+            all_dense.extend(dense)
     except Exception as e:
         logger.error(f"Dense retrieval failed: {e}")
         yield _sse("error", {"message": _classify_error(e), "detail": str(e)})
@@ -90,15 +115,32 @@ async def _run_pipeline(question: str):
         "label": "Tìm kiếm BM25 trên SQLite FTS5...",
         "eta_s": 1,
     })
+
+    all_sparse = []
     try:
-        sparse_results = await asyncio.to_thread(
-            retrieval_service.sparse_retrieve,
-            question,
-            settings.top_k_hybrid,
-        )
+        for q in queries:
+            sparse = await asyncio.to_thread(
+                retrieval_service.sparse_retrieve,
+                q,
+                settings.top_k_hybrid,
+            )
+            all_sparse.extend(sparse)
     except Exception as e:
         logger.warning(f"Sparse retrieval failed (non-fatal, dense-only fallback): {e}")
-        sparse_results = []
+
+    # ── Deduplicate by chunk_id (keep highest score) ─────────────────────────
+    if decompose and len(queries) > 1:
+        dense_dedup = {}
+        for cid, score in all_dense:
+            if cid not in dense_dedup or score > dense_dedup[cid]:
+                dense_dedup[cid] = score
+        all_dense = list(dense_dedup.items())
+
+        sparse_dedup = {}
+        for cid, score in all_sparse:
+            if cid not in sparse_dedup or score > sparse_dedup[cid]:
+                sparse_dedup[cid] = score
+        all_sparse = list(sparse_dedup.items())
 
     # ── Step 3: RRF fusion + Cohere Rerank ───────────────────────────────────
     yield _sse("progress", {
@@ -109,9 +151,9 @@ async def _run_pipeline(question: str):
     try:
         sources = await asyncio.to_thread(
             retrieval_service.fuse_and_rerank,
-            question,
-            dense_results,
-            sparse_results,
+            question,  # rerank against original question for relevance
+            all_dense,
+            all_sparse,
         )
     except Exception as e:
         logger.error(f"Rerank failed: {e}")
@@ -127,6 +169,7 @@ async def _run_pipeline(question: str):
 
 class AskRequest(BaseModel):
     question: str
+    decompose: bool = False
 
 
 @router.post("/api/ask")
@@ -135,6 +178,7 @@ async def ask(request: AskRequest):
     Main RAG endpoint — streams SSE events.
 
     Full event sequence:
+      [decomposition: {sub_queries}]        — only if decompose=true
       progress: {step, label, eta_s}   × 3  (embedding, sparse_search, rerank)
       sources:  {sources: [...]}
       token:    {token: str, model: str}  × N
@@ -147,10 +191,10 @@ async def ask(request: AskRequest):
             yield _sse("error", {"message": "Câu hỏi không được để trống.", "detail": ""})
         return StreamingResponse(_empty(), media_type="text/event-stream")
 
-    logger.info(f"Question: {question[:80]}...")
+    logger.info(f"Question: {question[:80]}... | decompose={request.decompose}")
 
     return StreamingResponse(
-        _run_pipeline(question),
+        _run_pipeline(question, decompose=request.decompose),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
