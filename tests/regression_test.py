@@ -102,6 +102,12 @@ def main():
             if line.strip():
                 samples.append(json.loads(line))
                 
+    import random
+    random.seed(42) # For reproducibility if needed, or remove for true randomness
+    # Pick 10 random samples to avoid LLM rate limits and token limits
+    if len(samples) > 10:
+        samples = random.sample(samples, 10)
+                
     print(f"Running regression test on {len(samples)} samples...")
     
     results = []
