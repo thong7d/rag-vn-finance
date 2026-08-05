@@ -4,12 +4,6 @@ metrics.py — Custom Prometheus metrics for RAG operations.
 
 from prometheus_client import Counter, Histogram
 
-# Total RAG requests
-rag_requests_total = Counter(
-    "rag_requests_total",
-    "Total RAG API requests",
-    ["endpoint", "status"]
-)
 
 # Latency histograms
 rag_embedding_latency_seconds = Histogram(

@@ -10,7 +10,6 @@ import re
 from typing import Any
 
 import cohere
-import numpy as np
 from qdrant_client import QdrantClient
 
 import sqlite3
@@ -71,7 +70,7 @@ def _dense_retrieve(query: str, top_k: int) -> list[tuple[str, float]]:
         query=query_emb,
         limit=top_k,
     )
-    
+
     rag_retrieval_latency_seconds.labels(type="dense").observe(time.perf_counter() - t0)
     return [(hit.payload["chunk_id"], float(hit.score)) for hit in results.points if "chunk_id" in hit.payload]
 
@@ -80,16 +79,16 @@ def _sparse_retrieve(query: str, top_k: int) -> list[tuple[str, float]]:
     t0 = time.perf_counter()
     db_path = get_sqlite_path()
     tokens = tokenize_vi(query)
-    
+
     if not tokens:
         return []
-        
+
     # FTS5 matches using OR to sum up IDF exactly like rank-bm25
     fts_query = " OR ".join(tokens)
-    
+
     conn = sqlite3.connect(db_path)
     cur = conn.cursor()
-    
+
     try:
         # SQLite bm25() returns negative score, lower is better. We negate it to get positive score.
         cur.execute('''
@@ -99,9 +98,9 @@ def _sparse_retrieve(query: str, top_k: int) -> list[tuple[str, float]]:
             ORDER BY bm25(chunks) ASC
             LIMIT ?
         ''', (fts_query, top_k))
-        
+
         results = [(row[0], float(row[1])) for row in cur.fetchall()]
-        
+
         rag_retrieval_latency_seconds.labels(type="sparse").observe(time.perf_counter() - t0)
         return results
     except Exception as e:
@@ -145,7 +144,7 @@ def _rerank(query: str, candidates: list[tuple[str, float]], top_n: int) -> list
         )
         reranked = [(valid_candidates[r.index][0], r.relevance_score) for r in resp.results]
         logger.info(f"Cohere rerank OK — top-{top_n} from {len(candidates)} candidates")
-        
+
         rag_retrieval_latency_seconds.labels(type="rerank").observe(time.perf_counter() - t0)
         return reranked
     except Exception as e:

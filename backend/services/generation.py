@@ -101,13 +101,13 @@ async def stream_answer(question: str, sources: list[dict]) -> AsyncGenerator[st
     for layer in layers:
         if previous_layer:
             rag_fallback_total.labels(from_model=previous_layer, to_model=layer["name"]).inc()
-            
+
         previous_layer = layer["name"]
-        
+
         try:
             logger.info(f"Trying {layer['name']} ({layer['model']})...")
             client = AsyncOpenAI(base_url=layer["base_url"], api_key=layer["api_key"])
-            
+
             t0 = time.perf_counter()
 
             stream = await client.chat.completions.create(

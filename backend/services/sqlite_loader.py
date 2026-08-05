@@ -48,7 +48,7 @@ def get_sqlite_path() -> str:
     )
 
     logger.info(f"SQLite DB loaded at: {db_path}")
-    
+
     # Optional: Verify connection
     try:
         conn = sqlite3.connect(db_path)

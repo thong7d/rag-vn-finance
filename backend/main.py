@@ -37,7 +37,7 @@ async def lifespan(app: FastAPI):
     # Step 2: Fetch chunk metadata from Qdrant Cloud IN BACKGROUND
     logger.info("Step 2/3: Starting background task to fetch chunk metadata...")
     import asyncio
-    
+
     def fetch_metadata():
         from qdrant_client import QdrantClient
         client = QdrantClient(url=settings.qdrant_url, api_key=settings.qdrant_api_key)
@@ -82,7 +82,6 @@ async def lifespan(app: FastAPI):
 
 
 def create_app() -> FastAPI:
-    settings = get_settings()
 
     app = FastAPI(
         title="Vietnamese Financial News RAG API",

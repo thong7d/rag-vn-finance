@@ -8,8 +8,8 @@
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
       "targets": [
         {
-          "expr": "rate(rag_requests_total[1m])",
-          "legendFormat": "{{endpoint}} - {{status}}"
+          "expr": "rate(http_requests_total[1m])",
+          "legendFormat": "{{handler}} - {{status}}"
         }
       ]
     },
@@ -56,7 +56,7 @@
       "gridPos": { "h": 4, "w": 12, "x": 0, "y": 16 },
       "targets": [
         {
-          "expr": "sum(rate(rag_decomposition_total[1h])) / sum(rate(rag_requests_total{endpoint=\"/api/ask\"}[1h]))",
+          "expr": "sum(rate(rag_decomposition_total[1h])) / sum(rate(http_requests_total{handler=\"/api/ask\"}[1h]))",
           "legendFormat": "Usage %"
         }
       ]

@@ -45,7 +45,7 @@ class OpenRouterEmbeddingAPI:
         t0 = time.time()
         resp = requests.post(self.API_URL, headers=headers, json=payload, timeout=30)
         latency = time.time() - t0
-        
+
         rag_embedding_latency_seconds.observe(latency)
 
         if resp.status_code == 200:
