@@ -5,7 +5,9 @@ import requests
 import sys
 
 def main():
-    backend_url = os.environ.get("BACKEND_URL", "http://localhost:10000")
+    backend_url = os.environ.get("BACKEND_URL")
+    if not backend_url:
+        backend_url = "https://rag-vn-finance-backend.onrender.com"
     ground_truth_path = "pipeline/synthetic_qa/ground_truth_final.jsonl"
     
     if not os.path.exists(ground_truth_path):
