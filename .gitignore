@@ -60,6 +60,7 @@ pipeline/evaluation/*.parquet
 pipeline/evaluation/**/*.parquet
 pipeline/synthetic_qa/*.parquet
 pipeline/synthetic_qa/*.jsonl
+!pipeline/synthetic_qa/ground_truth_final.jsonl
 pipeline/synthetic_qa/*.json
 
 # ── OS artifacts ──────────────────────────────────────────────────────────────
