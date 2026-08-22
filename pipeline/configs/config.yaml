@@ -108,13 +108,13 @@ synthetic_qa:
 evaluation:
   # Primary evaluator — zero cost, cross-model, no same-model bias
   # Ref: Zheng et al. (2023), "Judging LLM-as-a-Judge with MT-Bench"
-  groq_model: "llama-3.3-70b-versatile"  # verify at Phase 0
+  groq_model: "qwen/qwen3.6-27b"  # verify at Phase 0
   groq_rpm_limit: 30
   eval_sample_size: 100         # giới hạn mẫu đánh giá Ragas
 
-  # Ragas — bật để đánh giá bộ QA tổng hợp bằng Llama 3.3 Trọng tài
+  # Ragas — bật để đánh giá bộ QA tổng hợp bằng Qwen 3.6 27B Trọng tài
   ragas_enabled: true
-  ragas_llm: "meta-llama/llama-3.3-70b-instruct"   # via OpenRouter
+  ragas_llm: "qwen/qwen3.6-27b"   # via OpenRouter / Groq
   ragas_metrics:
     - faithfulness
     - answer_relevancy

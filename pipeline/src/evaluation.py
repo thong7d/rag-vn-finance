@@ -7,7 +7,7 @@ Implements two evaluation layers:
     - BERTScore     : semantic similarity using bert-base-multilingual-cased
                       (lang="vi" is set explicitly to avoid mislabeling Vietnamese)
 
-  Layer 2 — LLM-as-Judge (Groq API, llama-3.3-70b-versatile)
+  Layer 2 — LLM-as-Judge (Groq API, qwen/qwen3.6-27b)
     - Faithfulness   : Does the answer stay faithful to the retrieved context?
     - Answer Relevance: Does the answer actually address the question asked?
 
@@ -42,8 +42,8 @@ config = load_config()
 # Constants
 # ---------------------------------------------------------------------------
 
-GROQ_MODEL = config["evaluation"].get("groq_model", "llama-3.3-70b-versatile")
-GROQ_COOLDOWN = 20       # seconds between every Groq judge call (RPM safety)
+GROQ_MODEL = config["evaluation"].get("groq_model", "qwen/qwen3.6-27b")
+GROQ_COOLDOWN = 15       # seconds between every Groq judge call (RPM/TPM safety)
 CHECKPOINT_EVERY = 20    # flush parquet to disk every N evaluated rows
 MAX_RETRIES = 2          # retries on API / JSON parse failure per dimension
 
@@ -131,7 +131,7 @@ def compute_bertscore(predictions: list[str], references: list[str]) -> list[flo
 
 
 # ---------------------------------------------------------------------------
-# Layer 2 — LLM-as-Judge (Groq, llama-3.3-70b-versatile)
+# Layer 2 — LLM-as-Judge (Groq, qwen/qwen3.6-27b)
 # ---------------------------------------------------------------------------
 
 # ── Judge prompt templates ──────────────────────────────────────────────────

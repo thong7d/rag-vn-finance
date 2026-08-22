@@ -102,7 +102,7 @@ def build_llm_judge():
     from langchain_groq import ChatGroq
 
     judge_llm = ChatGroq(
-        model=config["evaluation"].get("groq_model", "llama-3.3-70b-versatile"),
+        model=config["evaluation"].get("groq_model", "qwen/qwen3.6-27b"),
         groq_api_key=groq_key,
         temperature=0.0,
         max_tokens=1024,

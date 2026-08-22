@@ -16,8 +16,9 @@ You must evaluate two metrics:
 Provide your evaluation as a JSON object with exactly these two keys: "faithfulness", "answer_relevancy". Do not output anything else.
 """
 
-def evaluate_with_groq(question, context, answer, api_key):
-    prompt = f"Question: {question}\n\nContext: {context}\n\nAnswer: {answer}"
+def evaluate_with_groq(question, context, answer, api_key, max_retries=3):
+    # Truncate context to ~1500 chars (~400 tokens) to ensure total input tokens stay under ~800, well below 8K TPM
+    prompt = f"Question: {question[:300]}\n\nContext: {context[:1500]}\n\nAnswer: {answer[:600]}"
     
     headers = {
         "Authorization": f"Bearer {api_key}",
@@ -25,27 +26,35 @@ def evaluate_with_groq(question, context, answer, api_key):
     }
     
     payload = {
-        "model": "llama-3.3-70b-versatile",
+        "model": "qwen/qwen3.6-27b",
         "messages": [
             {"role": "system", "content": JUDGE_SYSTEM_PROMPT},
             {"role": "user", "content": prompt}
         ],
         "temperature": 0.0,
+        "max_tokens": 256,
         "response_format": {"type": "json_object"}
     }
     
-    try:
-        response = requests.post(GROQ_API_URL, headers=headers, json=payload, timeout=30)
-        if response.status_code == 200:
-            result = response.json()
-            metrics = json.loads(result["choices"][0]["message"]["content"])
-            return float(metrics.get("faithfulness", 0.0)), float(metrics.get("answer_relevancy", 0.0))
-        else:
-            print(f"Groq API Error: {response.status_code} - {response.text}")
-            return 0.0, 0.0
-    except Exception as e:
-        print(f"Groq Evaluation Exception: {e}")
-        return 0.0, 0.0
+    for attempt in range(max_retries):
+        try:
+            response = requests.post(GROQ_API_URL, headers=headers, json=payload, timeout=30)
+            if response.status_code == 200:
+                result = response.json()
+                metrics = json.loads(result["choices"][0]["message"]["content"])
+                return float(metrics.get("faithfulness", 0.0)), float(metrics.get("answer_relevancy", 0.0))
+            elif response.status_code == 429:
+                sleep_time = 15 * (attempt + 1)
+                print(f"Groq API 429 Rate/Token Limit (attempt {attempt+1}/{max_retries}). Sleeping {sleep_time}s...")
+                time.sleep(sleep_time)
+            else:
+                print(f"Groq API Error: {response.status_code} - {response.text}")
+                time.sleep(5)
+        except Exception as e:
+            print(f"Groq Evaluation Exception: {e}")
+            time.sleep(5)
+            
+    return 0.0, 0.0
 
 def get_answer_from_backend(backend_url, question):
     try:
@@ -145,8 +154,8 @@ def main():
             
             results.append((faithfulness, answer_relevancy))
             
-            # Rate limit handling: max 30 RPM -> 2 seconds delay
-            time.sleep(2)
+            # Rate & Token limit handling for qwen/qwen3.6-27b (8K TPM, 30 RPM) -> 10s delay
+            time.sleep(10)
             
     # Compute averages
     if results:
