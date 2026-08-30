@@ -94,7 +94,9 @@ def get_answer_from_backend(backend_url, question):
         return "", []
 
 def main():
-    backend_url = os.environ.get("BACKEND_URL", "http://localhost:10000")
+    backend_url = os.environ.get("BACKEND_URL")
+    if not backend_url:
+        backend_url = "https://rag-vn-finance-backend.onrender.com"
     groq_api_key = os.environ.get("GROQ_API_KEY")
     
     if not groq_api_key:

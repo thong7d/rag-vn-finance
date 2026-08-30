@@ -4,11 +4,16 @@ on:
   schedule:
     - cron: "0 2 * * *"   # 2:00 UTC daily = 9:00 AM Vietnam
   workflow_dispatch: {}    # Manual trigger
+  push:
+    branches: ["microservices-migration"]  # Also run on push to keep it scoped
 
 jobs:
   regression:
     name: Full Regression Test
     runs-on: ubuntu-latest
+    # Cron always runs on the default branch; this guard ensures the job
+    # is a no-op when triggered on any branch other than microservices-migration
+    if: github.ref == 'refs/heads/microservices-migration' || github.event_name == 'workflow_dispatch'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -21,7 +26,8 @@ jobs:
       - name: Run Regression Test
         run: python tests/regression_test.py
         env:
-          BACKEND_URL: ${{ secrets.RENDER_BACKEND_URL }}
+          # Falls back to the public Render URL if the secret is not configured
+          BACKEND_URL: ${{ secrets.RENDER_BACKEND_URL || 'https://rag-vn-finance-backend.onrender.com' }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           
       - name: Upload Regression Report
