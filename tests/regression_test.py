@@ -55,7 +55,7 @@ def evaluate_with_groq(question, context, answer, api_key, max_retries=3):
             {"role": "user", "content": prompt}
         ],
         "temperature": 0.0,
-        "max_tokens": 512,
+        "max_tokens": 2048,
     }
     
     for attempt in range(max_retries):
@@ -80,6 +80,9 @@ def evaluate_with_groq(question, context, answer, api_key, max_retries=3):
             else:
                 print(f"Groq API Error: {response.status_code} - {response.text}")
                 time.sleep(5)
+        except json.JSONDecodeError as e:
+            print(f"Groq Evaluation JSON Error: {e}\nRaw output: {raw}")
+            time.sleep(5)
         except Exception as e:
             print(f"Groq Evaluation Exception: {e}")
             time.sleep(5)
