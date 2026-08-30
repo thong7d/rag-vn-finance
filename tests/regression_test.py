@@ -16,6 +16,25 @@ You must evaluate two metrics:
 Provide your evaluation as a JSON object with exactly these two keys: "faithfulness", "answer_relevancy". Do not output anything else.
 """
 
+def _strip_thinking(text: str) -> str:
+    """Strip <think>...</think> blocks (Qwen 3.6 is a reasoning model) and markdown fences."""
+    text = text.strip()
+    # Remove reasoning block
+    if "</think>" in text:
+        text = text.split("</think>")[-1].strip()
+    # Remove ```json ... ``` fences
+    import re
+    match = re.match(r"^```(?:json)?\s*\n?(.*?)\n?\s*```$", text, re.DOTALL)
+    if match:
+        text = match.group(1).strip()
+    # Extract JSON substring if surrounded by other text
+    start = text.find("{")
+    end = text.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        text = text[start:end + 1]
+    return text
+
+
 def evaluate_with_groq(question, context, answer, api_key, max_retries=3):
     # Truncate context to ~1500 chars (~400 tokens) to ensure total input tokens stay under ~800, well below 8K TPM
     prompt = f"Question: {question[:300]}\n\nContext: {context[:1500]}\n\nAnswer: {answer[:600]}"
@@ -25,6 +44,10 @@ def evaluate_with_groq(question, context, answer, api_key, max_retries=3):
         "Content-Type": "application/json"
     }
     
+    # NOTE: Do NOT use response_format=json_object with qwen/qwen3.6-27b.
+    # It is a reasoning model that outputs <think>...</think> blocks before the JSON,
+    # which causes Groq's server-side JSON validator to fail (400 json_validate_failed).
+    # We strip the thinking block manually instead.
     payload = {
         "model": "qwen/qwen3.6-27b",
         "messages": [
@@ -32,17 +55,24 @@ def evaluate_with_groq(question, context, answer, api_key, max_retries=3):
             {"role": "user", "content": prompt}
         ],
         "temperature": 0.0,
-        "max_tokens": 256,
-        "response_format": {"type": "json_object"}
+        "max_tokens": 512,
     }
     
     for attempt in range(max_retries):
         try:
             response = requests.post(GROQ_API_URL, headers=headers, json=payload, timeout=30)
             if response.status_code == 200:
-                result = response.json()
-                metrics = json.loads(result["choices"][0]["message"]["content"])
-                return float(metrics.get("faithfulness", 0.0)), float(metrics.get("answer_relevancy", 0.0))
+                raw = response.json()["choices"][0]["message"]["content"]
+                clean = _strip_thinking(raw)
+                metrics = json.loads(clean)
+                faith = metrics.get("faithfulness", 0.0)
+                relev = metrics.get("answer_relevancy", 0.0)
+                # Handle nested {score: ...} format
+                if isinstance(faith, dict):
+                    faith = faith.get("score", 0.0)
+                if isinstance(relev, dict):
+                    relev = relev.get("score", 0.0)
+                return float(faith), float(relev)
             elif response.status_code == 429:
                 sleep_time = 15 * (attempt + 1)
                 print(f"Groq API 429 Rate/Token Limit (attempt {attempt+1}/{max_retries}). Sleeping {sleep_time}s...")
