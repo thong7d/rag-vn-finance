@@ -19,7 +19,7 @@ def main():
         for line in f:
             if line.strip():
                 samples.append(json.loads(line))
-            if len(samples) >= 10:
+            if len(samples) >= 5:
                 break
                 
     if not samples:

@@ -64,14 +64,20 @@ def evaluate_with_groq(question, context, answer, api_key, max_retries=3):
             if response.status_code == 200:
                 raw = response.json()["choices"][0]["message"]["content"]
                 clean = _strip_thinking(raw)
-                metrics = json.loads(clean)
-                faith = metrics.get("faithfulness", 0.0)
-                relev = metrics.get("answer_relevancy", 0.0)
-                # Handle nested {score: ...} format
-                if isinstance(faith, dict):
-                    faith = faith.get("score", 0.0)
-                if isinstance(relev, dict):
-                    relev = relev.get("score", 0.0)
+                try:
+                    metrics = json.loads(clean)
+                    faith = metrics.get("faithfulness", 0.0)
+                    relev = metrics.get("answer_relevancy", 0.0)
+                    if isinstance(faith, dict): faith = faith.get("score", 0.0)
+                    if isinstance(relev, dict): relev = relev.get("score", 0.0)
+                except json.JSONDecodeError:
+                    # Fallback to regex if JSON is cut off (e.g. max_tokens limit)
+                    import re
+                    f_match = re.search(r'"faithfulness"\s*:\s*([0-9.]+)', raw)
+                    r_match = re.search(r'"answer_relevancy"\s*:\s*([0-9.]+)', raw)
+                    faith = float(f_match.group(1)) if f_match else 0.0
+                    relev = float(r_match.group(1)) if r_match else 0.0
+                    
                 return float(faith), float(relev)
             elif response.status_code == 429:
                 sleep_time = 15 * (attempt + 1)
@@ -80,9 +86,6 @@ def evaluate_with_groq(question, context, answer, api_key, max_retries=3):
             else:
                 print(f"Groq API Error: {response.status_code} - {response.text}")
                 time.sleep(5)
-        except json.JSONDecodeError as e:
-            print(f"Groq Evaluation JSON Error: {e}\nRaw output: {raw}")
-            time.sleep(5)
         except Exception as e:
             print(f"Groq Evaluation Exception: {e}")
             time.sleep(5)
@@ -146,11 +149,12 @@ def main():
             if line.strip():
                 samples.append(json.loads(line))
                 
-    import random
-    random.seed(42) # For reproducibility if needed, or remove for true randomness
-    # Pick 10 random samples to avoid LLM rate limits and token limits
-    if len(samples) > 10:
-        samples = random.sample(samples, 10)
+    # Pick 5 random samples. Use a date-based seed so each day rotates to a different set.
+    import datetime
+    today_seed = int(datetime.date.today().strftime("%Y%m%d"))
+    random.seed(today_seed)
+    if len(samples) > 5:
+        samples = random.sample(samples, 5)
                 
     print(f"Running regression test on {len(samples)} samples...")
     
@@ -178,6 +182,13 @@ def main():
             # Call Groq Judge
             faithfulness, answer_relevancy = evaluate_with_groq(question, context, answer, groq_api_key)
             print(f"  ✅ Faithfulness: {faithfulness:.2f}, Relevancy: {answer_relevancy:.2f}")
+            
+            writer.writerow({'id': i, 'question': question, 'faithfulness': faithfulness, 'answer_relevancy': answer_relevancy, 'status': 'success'})
+            results.append((faithfulness, answer_relevancy))
+            
+            # Avoid hitting Groq 8K TPM limit and Gemini 15 RPM limit
+            if i < len(samples) - 1:
+                time.sleep(20)
             
             writer.writerow({
                 'id': i, 
