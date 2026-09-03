@@ -151,6 +151,7 @@ def main():
                 
     # Pick 5 random samples. Use a date-based seed so each day rotates to a different set.
     import datetime
+    import random
     today_seed = int(datetime.date.today().strftime("%Y%m%d"))
     random.seed(today_seed)
     if len(samples) > 5:
