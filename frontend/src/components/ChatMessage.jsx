@@ -13,7 +13,7 @@ export default function ChatMessage({ answer, isStreaming, model }) {
     <div className="answer-panel">
       <div className="panel-header">
         {isStreaming && <span className="panel-dot" />}
-        🤖 Câu trả lời
+        🤖 Answer
         {model && (
           <span style={{ marginLeft: "auto", fontWeight: 400, color: "var(--accent-green)", textTransform: "none", letterSpacing: 0 }}>
             via {model}
@@ -22,7 +22,7 @@ export default function ChatMessage({ answer, isStreaming, model }) {
       </div>
       <div className={`answer-body ${isEmpty ? "empty" : ""}`}>
         {isEmpty && !isStreaming ? (
-          "Câu trả lời sẽ xuất hiện ở đây sau khi bạn đặt câu hỏi..."
+          "Your answer will appear here once you ask a question..."
         ) : (
           <>
             {answer}

@@ -51,12 +51,12 @@ export default function App() {
       <section className="hero-section">
         <div className="app-container">
           <h1 className="hero-title">
-            Hỏi đáp <span>thông minh</span> về<br />
-            Tài chính Việt Nam
+            Intelligent Q&amp;A on<br />
+            Vietnamese Finance
           </h1>
           <p className="hero-sub">
-            Hệ thống RAG chuyên biệt — Dữ liệu 10,000+ bài báo tài chính
-            từ 2015–2024. Câu trả lời được trích dẫn nguồn và có thể kiểm chứng.
+            Specialized RAG system — 10,000+ Vietnamese financial news articles
+            from 2015–2024. Answers are cited and verifiable.
           </p>
         </div>
       </section>
@@ -92,9 +92,9 @@ export default function App() {
 
           {/* Sources */}
           {sources.length > 0 && (
-            <section className="sources-section" aria-label="Nguồn trích dẫn">
+            <section className="sources-section" aria-label="Cited sources">
               <div className="sources-title">
-                📄 Nguồn trích dẫn ({sources.length} đoạn ngữ cảnh)
+                📄 Sources ({sources.length} retrieved passages)
               </div>
               <div className="sources-grid">
                 {sources.map((s, i) => (

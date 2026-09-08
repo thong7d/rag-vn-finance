@@ -13,7 +13,7 @@ export default function SourceCard({ source, index }) {
   const barWidth = Math.min(Math.round(score * 100), 100);
   const scoreLabel = score.toFixed(4);
 
-  const shortTitle = title?.trim() || `Đoạn ngữ cảnh ${index}`;
+  const shortTitle = title?.trim() || `Context Passage ${index}`;
   const excerpt = text?.trim().slice(0, 240) + (text?.length > 240 ? "..." : "");
 
   return (
@@ -37,19 +37,19 @@ export default function SourceCard({ source, index }) {
 
       <p className="source-excerpt">{excerpt}</p>
 
-      {url && url !== "Không có liên kết" ? (
+      {url && url !== "N/A" ? (
         <a
           href={url}
           target="_blank"
           rel="noopener noreferrer"
           className="source-link"
-          aria-label={`Xem bài gốc: ${shortTitle}`}
+          aria-label={`View original article: ${shortTitle}`}
         >
-          🔗 Xem bài gốc ↗
+          🔗 View source ↗
         </a>
       ) : (
         <span className="source-link" style={{ cursor: "default", opacity: 0.4 }}>
-          Không có liên kết
+          No link available
         </span>
       )}
     </div>

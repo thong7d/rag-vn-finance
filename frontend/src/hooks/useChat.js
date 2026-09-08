@@ -127,7 +127,7 @@ export function useChat() {
 
             case "error":
               stopCountdown();
-              setError(event.data.message || "Đã xảy ra lỗi không xác định.");
+              setError(event.data.message || "An unknown error occurred. Please try again.");
               setProgressStep(null);
               setStatus("error");
               break;
@@ -168,7 +168,7 @@ export function useChat() {
 // ── Network error classifier ──────────────────────────────────────────────────
 
 /**
- * Maps raw JS network/fetch exceptions to user-friendly Vietnamese messages.
+ * Maps raw JS network/fetch exceptions to user-friendly English error messages.
  */
 function classifyNetworkError(err) {
   const msg = (err.message || "").toLowerCase();
@@ -179,20 +179,20 @@ function classifyNetworkError(err) {
     msg.includes("load failed") ||
     msg.includes("network request failed")
   ) {
-    return "⏳ Không thể kết nối đến backend. Backend có thể đang khởi động lại (cold start ~30 giây). Vui lòng thử lại sau.";
+    return "⏳ Cannot reach backend. It may be starting up (cold start ~30s). Please try again."
   }
   if (msg.includes("http 5")) {
-    return `⛔ Lỗi máy chủ (${err.message}). Vui lòng thử lại sau.`;
+    return `⛔ Server error (${err.message}). Please try again later.`;
   }
   if (msg.includes("http 4")) {
-    return `❌ Lỗi yêu cầu (${err.message}).`;
+    return `❌ Request error (${err.message}).`;
   }
   if (
     msg.includes("timeout") ||
     msg.includes("aborterror") ||
     msg.includes("aborted")
   ) {
-    return "⏱️ Yêu cầu bị hủy do quá thời gian chờ. Vui lòng thử lại.";
+    return "⏱️ Request timed out. Please try again.";
   }
-  return err.message || "❌ Lỗi không xác định. Vui lòng thử lại.";
+  return err.message || "❌ Unknown error. Please try again.";
 }

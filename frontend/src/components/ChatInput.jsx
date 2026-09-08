@@ -50,7 +50,7 @@ export default function ChatInput({ onSubmit, isLoading, showSamples = true, dec
   return (
     <div className={`chat-input-wrapper${decompose ? " chat-input-wrapper--decompose" : ""}`}>
       <label className="chat-input-label" htmlFor="chat-input">
-        📊 Câu hỏi tài chính
+        📊 Financial Question
       </label>
       <textarea
         id="chat-input"
@@ -62,7 +62,7 @@ export default function ChatInput({ onSubmit, isLoading, showSamples = true, dec
         placeholder={PLACEHOLDER_EXAMPLES[0]}
         rows={2}
         disabled={isLoading}
-        aria-label="Nhập câu hỏi về tài chính Việt Nam"
+        aria-label="Ask a question about Vietnamese financial news"
       />
       <div className="chat-input-footer">
         {/* Deep Analysis toggle */}
@@ -84,15 +84,15 @@ export default function ChatInput({ onSubmit, isLoading, showSamples = true, dec
           className="submit-btn"
           onClick={handleSubmit}
           disabled={isLoading || !value.trim()}
-          aria-label="Gửi câu hỏi"
+          aria-label="Submit question"
         >
           {isLoading ? (
             <>
-              <span className="spinner" /> Đang xử lý...
+              <span className="spinner" /> Processing...
             </>
           ) : (
             <>
-              ↗ Gửi câu hỏi
+              ↗ Ask
             </>
           )}
         </button>

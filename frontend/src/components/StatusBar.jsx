@@ -49,7 +49,7 @@ export default function StatusBar({ status, error, progressStep, etaRemaining, a
             })}
           </div>
           {etaRemaining > 0 && (
-            <span className="eta-badge" aria-label={`Ước tính ${etaRemaining} giây`}>
+            <span className="pipeline-chip pipeline-chip--active" aria-label={`Estimated ${etaRemaining} seconds remaining`}>
               {etaRemaining}s
             </span>
           )}
@@ -64,7 +64,7 @@ export default function StatusBar({ status, error, progressStep, etaRemaining, a
     return (
       <div className="status-bar loading" role="status" aria-live="polite">
         <span className="spinner" />
-        <span>Đang xử lý câu hỏi...</span>
+        <span>Processing your question...</span>
       </div>
     );
   }
@@ -84,7 +84,7 @@ export default function StatusBar({ status, error, progressStep, etaRemaining, a
           </div>
         </div>
         <div className="pipeline-label">
-          Đang sinh câu trả lời
+          Generating answer
           {activeModel && (
             <span style={{ color: "var(--accent-green)", marginLeft: "0.3rem" }}>
               · {activeModel}
@@ -100,14 +100,14 @@ export default function StatusBar({ status, error, progressStep, etaRemaining, a
   if (status === "done") {
     return (
       <div className="status-bar success" role="status">
-        ✓ <span>Hoàn thành</span>
+        ✓ <span>Done</span>
       </div>
     );
   }
 
   // ── Error ─────────────────────────────────────────────────────────────────
   if (status === "error") {
-    const displayError = error || "Đã xảy ra lỗi. Vui lòng thử lại.";
+    const displayError = error || "An error occurred. Please try again.";
     const isLong = displayError.length > 120;
     return (
       <div className="status-bar error" role="alert" aria-live="assertive">
@@ -123,7 +123,7 @@ export default function StatusBar({ status, error, progressStep, etaRemaining, a
             onClick={() => setErrorExpanded((v) => !v)}
             aria-expanded={errorExpanded}
           >
-            {errorExpanded ? "Thu gọn ▲" : "Chi tiết ▼"}
+            {errorExpanded ? "Collapse ▲" : "Details ▼"}
           </button>
         )}
       </div>

@@ -42,18 +42,18 @@ def _classify_error(e: Exception) -> str:
     """Map low-level exceptions to user-friendly Vietnamese error messages."""
     msg = str(e).lower()
     if any(k in msg for k in ["nameresolutionerror", "no address", "failed to resolve", "gaierror", "dns"]):
-        return "🔌 Dịch vụ embedding tạm thời gián đoạn (lỗi DNS). Vui lòng thử lại sau ít phút."
+        return "🔌 Embedding service temporarily unavailable (DNS error). Please try again in a few minutes."
     if "timeout" in msg:
-        return "⏱️ Quá thời gian chờ kết nối dịch vụ. Vui lòng thử lại."
+        return "⏱️ Connection to service timed out. Please try again."
     if any(k in msg for k in ["429", "rate limit", "toomanyrequests", "quota"]):
-        return "⚠️ Đã đạt giới hạn request API. Vui lòng thử lại sau vài phút."
+        return "⚠️ API rate limit reached. Please try again in a few minutes."
     if any(k in msg for k in ["401", "unauthorized", "invalid token"]):
-        return "🔑 Lỗi xác thực API key. Vui lòng kiểm tra cấu hình máy chủ."
+        return "🔑 API authentication error. Please check server configuration."
     if any(k in msg for k in ["503", "service unavailable", "connection refused"]):
-        return "🔌 Dịch vụ bên ngoài tạm thời không khả dụng. Vui lòng thử lại."
+        return "🔌 External service temporarily unavailable. Please try again."
     if any(k in msg for k in ["connectionerror", "connection error", "max retries"]):
-        return "🔌 Không thể kết nối đến dịch vụ bên ngoài. Vui lòng thử lại."
-    return "❌ Lỗi không xác định trong quá trình truy xuất. Vui lòng thử lại."
+        return "🔌 Unable to connect to external service. Please try again."
+    return "❌ Unknown retrieval error. Please try again."
 
 
 # ── Main Pipeline Generator ───────────────────────────────────────────────────
@@ -112,7 +112,7 @@ async def _run_pipeline(question: str, decompose: bool = False):
     # ── Step 2: Sparse retrieval (SQLite FTS5 BM25 — fast, non-fatal) ────────
     yield _sse("progress", {
         "step": "sparse_search",
-        "label": "Tìm kiếm BM25 trên SQLite FTS5...",
+        "label": "BM25 full-text search on SQLite FTS5...",
         "eta_s": 1,
     })
 
@@ -145,7 +145,7 @@ async def _run_pipeline(question: str, decompose: bool = False):
     # ── Step 3: RRF fusion + Cohere Rerank ───────────────────────────────────
     yield _sse("progress", {
         "step": "rerank",
-        "label": "Cohere reranking top-30 kết quả...",
+        "label": "Cohere reranking top-30 candidates...",
         "eta_s": 3,
     })
     try:
@@ -188,7 +188,7 @@ async def ask(request: AskRequest):
     question = request.question.strip()
     if not question:
         async def _empty():
-            yield _sse("error", {"message": "Câu hỏi không được để trống.", "detail": ""})
+            yield _sse("error", {"message": "Question cannot be empty.", "detail": ""})
         return StreamingResponse(_empty(), media_type="text/event-stream")
 
     logger.info(f"Question: {question[:80]}... | decompose={request.decompose}")
