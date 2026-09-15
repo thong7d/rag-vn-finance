@@ -49,6 +49,36 @@ Input: "Lợi nhuận Vietcombank quý 1/2023 là bao nhiêu?"
 Output: ["Lợi nhuận Vietcombank quý 1/2023 là bao nhiêu?"]"""
 
 
+import re
+
+
+def _extract_json_array(raw: str) -> str:
+    """
+    Robustly extract a JSON array string from a model response that may contain:
+    - <think>...</think> reasoning blocks (Gemma 4 / Qwen reasoning models)
+    - ```json ... ``` markdown code fences
+    - Surrounding explanation text
+
+    Returns the extracted JSON array string, or raises ValueError if not found.
+    """
+    # 1. Strip <think>...</think> reasoning block
+    if "</think>" in raw:
+        raw = raw.split("</think>")[-1].strip()
+
+    # 2. Strip ```json ... ``` or ``` ... ``` fences
+    fence_match = re.match(r"^```(?:json)?\s*\n?(.*?)\n?\s*```$", raw, re.DOTALL)
+    if fence_match:
+        raw = fence_match.group(1).strip()
+
+    # 3. Regex: find the first [...] array in the output (handles extra prose)
+    array_match = re.search(r"\[.*?\]", raw, re.DOTALL)
+    if array_match:
+        return array_match.group(0)
+
+    # 4. Last resort: return as-is (will raise JSONDecodeError if invalid)
+    return raw.strip()
+
+
 def decompose_query(question: str) -> list[str]:
     """
     Decompose a complex question into sub-queries using Gemma 4 31B.
@@ -80,14 +110,9 @@ def decompose_query(question: str) -> list[str]:
         )
 
         raw = response.choices[0].message.content.strip()
+        logger.debug(f"Decomposer raw output: {raw[:200]}")
 
-        # Strip markdown code fences if present
-        if raw.startswith("```"):
-            raw = raw.split("\n", 1)[-1]  # remove first line
-            raw = raw.rsplit("```", 1)[0]  # remove closing fence
-            raw = raw.strip()
-
-        sub_queries = json.loads(raw)
+        sub_queries = json.loads(_extract_json_array(raw))
 
         if not isinstance(sub_queries, list) or len(sub_queries) == 0:
             logger.warning(f"Decomposer returned invalid format, falling back to original: {raw}")
