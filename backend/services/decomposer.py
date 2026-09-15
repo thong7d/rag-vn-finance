@@ -16,28 +16,42 @@ from core.logging import setup_logger
 logger = setup_logger("Decomposer")
 
 DECOMPOSE_SYSTEM_PROMPT = """You are a query decomposition expert for a Vietnamese financial news RAG system.
-Given a complex question, break it down into 2-3 independent sub-questions that can each
-be answered by searching a financial news database independently.
 
-Rules:
-1. If the question is already simple (single entity, single fact), return it as-is in a single-element array.
-2. Each sub-question must be self-contained and understandable without context from other sub-questions.
-3. Keep sub-questions in Vietnamese.
-4. Maximum 3 sub-questions.
-5. Return ONLY a JSON array of strings, no markdown, no explanation.
+Your job: decide whether a question needs to be broken into 2-3 independent sub-questions for parallel retrieval.
 
-Example:
+DECOMPOSE when the question involves ANY of:
+- Comparing 2+ entities (companies, banks, products, indices)
+- Asking about 2+ time periods (year-over-year, quarterly trends)
+- Asking about both cause AND effect of an event
+- Multiple metrics about the same entity (e.g., both revenue AND profit)
+
+DO NOT DECOMPOSE when:
+- The question asks for exactly ONE fact about ONE entity at ONE time
+- It is already a simple lookup question
+
+Return ONLY a JSON array of strings. No markdown, no explanation.
+
+Examples:
+
 Input: "So sánh lợi nhuận của Vietcombank và BIDV năm 2023, ngân hàng nào tăng trưởng mạnh hơn?"
-Output: ["Lợi nhuận của Vietcombank năm 2023 là bao nhiêu?", "Lợi nhuận của BIDV năm 2023 là bao nhiêu?", "Tăng trưởng lợi nhuận ngân hàng năm 2023"]
+Output: ["Lợi nhuận sau thuế của Vietcombank (VCB) năm 2023 là bao nhiêu?", "Lợi nhuận sau thuế của BIDV năm 2023 là bao nhiêu?", "Tăng trưởng lợi nhuận ngân hàng thương mại Việt Nam năm 2023"]
 
-Example:
+Input: "Doanh thu và lợi nhuận của Tập đoàn Hòa Phát thay đổi như thế nào giữa năm 2022 và 2023?"
+Output: ["Doanh thu và lợi nhuận Hòa Phát năm 2022 là bao nhiêu?", "Doanh thu và lợi nhuận Hòa Phát năm 2023 là bao nhiêu?"]
+
+Input: "Sự cố xử lý sai phạm tại Vạn Thịnh Phát ảnh hưởng thế nào đến thị trường trái phiếu và Ngân hàng SCB?"
+Output: ["Vụ sai phạm của Tập đoàn Vạn Thịnh Phát là gì?", "Tác động của vụ Vạn Thịnh Phát đến thị trường trái phiếu doanh nghiệp", "Tình trạng Ngân hàng SCB sau vụ Vạn Thịnh Phát"]
+
+Input: "Tỷ lệ nợ xấu và bao phủ nợ xấu của VPBank và Techcombank năm 2023 là bao nhiêu?"
+Output: ["Tỷ lệ nợ xấu và bao phủ nợ xấu của VPBank năm 2023", "Tỷ lệ nợ xấu và bao phủ nợ xấu của Techcombank năm 2023"]
+
 Input: "Lợi nhuận Vietcombank quý 1/2023 là bao nhiêu?"
 Output: ["Lợi nhuận Vietcombank quý 1/2023 là bao nhiêu?"]"""
 
 
 def decompose_query(question: str) -> list[str]:
     """
-    Decompose a complex question into sub-queries using Gemini Flash Lite.
+    Decompose a complex question into sub-queries using Gemma 4 31B.
 
     Returns a list of 1-3 sub-query strings.
     Falls back to [question] on any failure.
@@ -52,13 +66,16 @@ def decompose_query(question: str) -> list[str]:
             api_key=api_key,
         )
 
+        # Merge system prompt into user message: Gemma 4 follows user role more reliably
+        # than a separate system role when using the Google AI Studio OpenAI-compat endpoint.
+        merged_content = f"{DECOMPOSE_SYSTEM_PROMPT}\n\nInput: \"{question}\"\nOutput:"
+
         response = client.chat.completions.create(
             model="gemma-4-31b-it",
             messages=[
-                {"role": "system", "content": DECOMPOSE_SYSTEM_PROMPT},
-                {"role": "user", "content": question},
+                {"role": "user", "content": merged_content},
             ],
-            temperature=0.0,
+            temperature=0.4,   # Slightly creative to encourage decomposition decisions
             max_tokens=512,
         )
 
