@@ -7,6 +7,7 @@ fails or the question is already simple.
 """
 
 import json
+import re
 
 from openai import OpenAI
 
@@ -48,8 +49,6 @@ Output: ["Tỷ lệ nợ xấu và bao phủ nợ xấu của VPBank năm 2023",
 Input: "Lợi nhuận Vietcombank quý 1/2023 là bao nhiêu?"
 Output: ["Lợi nhuận Vietcombank quý 1/2023 là bao nhiêu?"]"""
 
-
-import re
 
 
 def _extract_json_array(raw: str) -> str:

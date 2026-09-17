@@ -44,12 +44,12 @@ def evaluate_with_groq(question, context, answer, api_key, max_retries=3):
         "Content-Type": "application/json"
     }
     
-    # NOTE: Do NOT use response_format=json_object with qwen/qwen3.6-27b.
+    # NOTE: Do NOT use response_format=json_object with qwen/qwen3.8-27b.
     # It is a reasoning model that outputs <think>...</think> blocks before the JSON,
     # which causes Groq's server-side JSON validator to fail (400 json_validate_failed).
     # We strip the thinking block manually instead.
     payload = {
-        "model": "qwen/qwen3.6-27b",
+        "model": "qwen/qwen3.8-27b",
         "messages": [
             {"role": "system", "content": JUDGE_SYSTEM_PROMPT},
             {"role": "user", "content": prompt}
@@ -201,7 +201,7 @@ def main():
             
             results.append((faithfulness, answer_relevancy))
             
-            # Rate & Token limit handling for qwen/qwen3.6-27b (8K TPM, 30 RPM) -> 10s delay
+            # Rate & Token limit handling for qwen/qwen3.8-27b (8K TPM, 30 RPM) -> 10s delay
             time.sleep(10)
             
     # Compute averages
