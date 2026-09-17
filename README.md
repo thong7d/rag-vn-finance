@@ -55,7 +55,7 @@ The project demonstrates an end-to-end applied NLP pipeline — from raw data in
 |---|---|
 | **Hybrid Retrieval** | Dense (multilingual-e5-large via HF Inference API) + Sparse (SQLite FTS5 BM25) fused with Reciprocal Rank Fusion |
 | **Cohere Reranker** | Cross-encoder reranking of top-30 candidates → top-5 final passages |
-| **3-Layer LLM Fallback** | Gemini 2.0 Flash Lite → Mistral Small 2506 → Gemma 3 27B — automatic failover with no user disruption |
+| **3-Layer LLM Fallback** | Gemini 3.1 Flash Lite → Mistral Small 2506 → Gemma 3 27B — automatic failover with no user disruption |
 | **Query Decomposition** | Optional deep-analysis mode: Gemma 4 31B decomposes complex multi-hop questions into parallel sub-queries |
 | **SSE Streaming** | Token-by-token streaming with real-time pipeline progress events and ETA countdown |
 | **Source Citations** | Every answer is accompanied by ranked source passages with Cohere relevance scores |
@@ -93,7 +93,7 @@ Retrieval benchmark (sentence-aware chunking, top-5 results):
 | **Sparse Search** | SQLite FTS5 (BM25, hosted on HF Hub as a dataset) |
 | **Fusion** | Reciprocal Rank Fusion (RRF) |
 | **Reranker** | Cohere `rerank-multilingual-v3.0` |
-| **LLM** | Gemini 2.0 Flash Lite → Mistral Small 2506 → Gemma 3 27B |
+| **LLM** | Gemini 3.1 Flash Lite → Mistral Small 2506 → Gemma 3 27B |
 | **Query Decomposition** | Gemma 4 31B via Google AI Studio |
 | **LLM Judge** | Qwen 3.6 27B via Groq (nightly evaluation) |
 | **Backend** | FastAPI + Uvicorn, SSE streaming, Prometheus metrics (`/metrics`) |
