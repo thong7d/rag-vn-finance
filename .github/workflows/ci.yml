@@ -2,9 +2,9 @@ name: CI — Lint & Smoke Test
 
 on:
   push:
-    branches: ["microservices-migration"]
+    branches: ["main"]
   pull_request:
-    branches: ["microservices-migration"]
+    branches: ["main"]
 
 jobs:
   lint-frontend:
