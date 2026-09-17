@@ -54,28 +54,45 @@ Output: ["Lợi nhuận Vietcombank quý 1/2023 là bao nhiêu?"]"""
 def _extract_json_array(raw: str) -> str:
     """
     Robustly extract a JSON array string from a model response that may contain:
-    - <think>...</think> reasoning blocks (Gemma 4 / Qwen reasoning models)
-    - ```json ... ``` markdown code fences
+    - <think>...</think> reasoning blocks (Qwen / some Gemma variants)
+    - <thought>...</thought> reasoning blocks (Gemma 4 variant, may be truncated)
+    - ```json ... ``` or `[...]` markdown/backtick fences
     - Surrounding explanation text
 
-    Returns the extracted JSON array string, or raises ValueError if not found.
+    Strategy: search the FULL raw text for a valid JSON array first,
+    so that even an array embedded inside a reasoning block is captured.
     """
-    # 1. Strip <think>...</think> reasoning block
-    if "</think>" in raw:
-        raw = raw.split("</think>")[-1].strip()
+    # Step 1: Find a complete [...] array anywhere in the full raw text
+    for m in re.finditer(r"\[.*?\]", raw, re.DOTALL):
+        try:
+            json.loads(m.group(0))   # validate
+            return m.group(0)
+        except json.JSONDecodeError:
+            continue  # skip partial/bad matches, try next
 
-    # 2. Strip ```json ... ``` or ``` ... ``` fences
-    fence_match = re.match(r"^```(?:json)?\s*\n?(.*?)\n?\s*```$", raw, re.DOTALL)
-    if fence_match:
-        raw = fence_match.group(1).strip()
+    # Step 2: Strip reasoning tags and try again
+    cleaned = raw
+    if "</think>" in cleaned:
+        cleaned = cleaned.split("</think>")[-1].strip()
+    if "</thought>" in cleaned:
+        cleaned = cleaned.split("</thought>")[-1].strip()
 
-    # 3. Regex: find the first [...] array in the output (handles extra prose)
-    array_match = re.search(r"\[.*?\]", raw, re.DOTALL)
-    if array_match:
-        return array_match.group(0)
+    # Step 3: Strip markdown/backtick fences
+    fence = re.match(r"^```(?:json)?\s*\n?(.*?)\n?\s*```$", cleaned, re.DOTALL)
+    if fence:
+        cleaned = fence.group(1).strip()
+    sbt = re.match(r"^`([^`].+[^`])`$", cleaned.strip(), re.DOTALL)
+    if sbt:
+        cleaned = sbt.group(1).strip()
 
-    # 4. Last resort: return as-is (will raise JSONDecodeError if invalid)
-    return raw.strip()
+    # Step 4: Last attempt on cleaned text
+    m2 = re.search(r"\[.*?\]", cleaned, re.DOTALL)
+    if m2:
+        return m2.group(0)
+
+    # Step 5: Return as-is (will raise JSONDecodeError if invalid)
+    return cleaned.strip()
+
 
 
 def decompose_query(question: str) -> list[str]:
@@ -105,7 +122,7 @@ def decompose_query(question: str) -> list[str]:
                 {"role": "user", "content": merged_content},
             ],
             temperature=0.4,   # Slightly creative to encourage decomposition decisions
-            max_tokens=512,
+            max_tokens=1024,   # Increased from 512 — prevents truncated JSON arrays in reasoning models
         )
 
         raw = response.choices[0].message.content.strip()
