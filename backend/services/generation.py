@@ -90,7 +90,7 @@ async def stream_answer(question: str, sources: list[dict]) -> AsyncGenerator[st
             "name": "Gemma",
             "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
             "api_key": settings.gemini_api_key,   # Google AI Studio for Gemma
-            "model": "gemma-3-27b-it",
+            "model": "gemma-2-27b-it",
         },
     ]
 

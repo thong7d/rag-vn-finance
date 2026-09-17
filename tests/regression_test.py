@@ -35,19 +35,15 @@ def _strip_thinking(text: str) -> str:
     return text
 
 
-def evaluate_with_groq(question, context, answer, api_key, max_retries=3):
-    # Truncate context to ~1500 chars (~400 tokens) to ensure total input tokens stay under ~800, well below 8K TPM
-    prompt = f"Question: {question[:300]}\n\nContext: {context[:1500]}\n\nAnswer: {answer[:600]}"
+def evaluate_with_groq(question, context, answer, api_key, max_retries=4):
+    # Truncate context to ~1200 chars (~300 tokens) to ensure total input tokens stay under ~600
+    prompt = f"Question: {question[:250]}\n\nContext: {context[:1200]}\n\nAnswer: {answer[:500]}"
     
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json"
     }
     
-    # NOTE: Do NOT use response_format=json_object with qwen/qwen3.8-27b.
-    # It is a reasoning model that outputs <think>...</think> blocks before the JSON,
-    # which causes Groq's server-side JSON validator to fail (400 json_validate_failed).
-    # We strip the thinking block manually instead.
     payload = {
         "model": "qwen/qwen3.8-27b",
         "messages": [
@@ -55,7 +51,7 @@ def evaluate_with_groq(question, context, answer, api_key, max_retries=3):
             {"role": "user", "content": prompt}
         ],
         "temperature": 0.0,
-        "max_tokens": 2048,
+        "max_tokens": 1024,
     }
     
     for attempt in range(max_retries):
@@ -71,7 +67,6 @@ def evaluate_with_groq(question, context, answer, api_key, max_retries=3):
                     if isinstance(faith, dict): faith = faith.get("score", 0.0)
                     if isinstance(relev, dict): relev = relev.get("score", 0.0)
                 except json.JSONDecodeError:
-                    # Fallback to regex if JSON is cut off (e.g. max_tokens limit)
                     import re
                     f_match = re.search(r'"faithfulness"\s*:\s*([0-9.]+)', raw)
                     r_match = re.search(r'"answer_relevancy"\s*:\s*([0-9.]+)', raw)
@@ -80,7 +75,7 @@ def evaluate_with_groq(question, context, answer, api_key, max_retries=3):
                     
                 return float(faith), float(relev)
             elif response.status_code == 429:
-                sleep_time = 15 * (attempt + 1)
+                sleep_time = 20 * (attempt + 1)
                 print(f"Groq API 429 Rate/Token Limit (attempt {attempt+1}/{max_retries}). Sleeping {sleep_time}s...")
                 time.sleep(sleep_time)
             else:
@@ -189,20 +184,7 @@ def main():
             
             # Avoid hitting Groq 8K TPM limit and Gemini 15 RPM limit
             if i < len(samples) - 1:
-                time.sleep(20)
-            
-            writer.writerow({
-                'id': i, 
-                'question': question, 
-                'faithfulness': faithfulness, 
-                'answer_relevancy': answer_relevancy, 
-                'status': 'success'
-            })
-            
-            results.append((faithfulness, answer_relevancy))
-            
-            # Rate & Token limit handling for qwen/qwen3.8-27b (8K TPM, 30 RPM) -> 10s delay
-            time.sleep(10)
+                time.sleep(15)
             
     # Compute averages
     if results:
