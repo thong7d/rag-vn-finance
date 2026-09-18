@@ -26,26 +26,7 @@ The project demonstrates an end-to-end applied NLP pipeline — from raw data in
 
 ## System Architecture
 
-```
-┌─────────────────────┐      SSE Stream (real-time)      ┌──────────────────────────────────────┐
-│   React Frontend    │ ◄──────────────────────────────► │   FastAPI Backend                    │
-│   (Vercel)          │                                   │   (Render)                           │
-└─────────────────────┘                                   │                                      │
-                                                          │  POST /api/ask → SSE pipeline:       │
-                                                          │  ┌────────────────────────────────┐  │
-                                                          │  │ 1. Query Decomposition (opt.)  │  │
-                                                          │  │    └─ Gemma 4 31B via AI Studio│  │
-                                                          │  │ 2. Dense Retrieval             │  │
-                                                          │  │    └─ multilingual-e5-large    │  │
-                                                          │  │       + Qdrant Cloud HNSW      │  │
-                                                          │  │ 3. Sparse Retrieval            │  │
-                                                          │  │    └─ SQLite FTS5 (BM25)       │  │
-                                                          │  │ 4. RRF Fusion + Cohere Rerank  │  │
-                                                          │  │ 5. LLM Generation              │  │
-                                                          │  │    └─ Gemini → Mistral → Gemma │  │
-                                                          │  └────────────────────────────────┘  │
-                                                          └──────────────────────────────────────┘
-```
+![System Architecture](rag-finance-architecture.dark.png)
 
 ---
 
