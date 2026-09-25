@@ -40,7 +40,21 @@ class Settings(BaseSettings):
     # Comma-separated list; set to your Vercel domain on production
     allowed_origins: str = "*"
 
+    # ── Database (PostgreSQL / Neon Serverless) ───────────────────────────────
+    database_url: str | None = None
+
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+
+    @property
+    def async_database_url(self) -> str | None:
+        if not self.database_url:
+            return None
+        url = self.database_url
+        if url.startswith("postgresql://"):
+            url = url.replace("postgresql://", "postgresql+asyncpg://", 1)
+        elif url.startswith("postgres://"):
+            url = url.replace("postgres://", "postgresql+asyncpg://", 1)
+        return url
 
     @property
     def cors_origins(self) -> list[str]:

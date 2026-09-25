@@ -53,13 +53,22 @@ def _sse(event: str, data: Any) -> str:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
-async def stream_answer(question: str, sources: list[dict]) -> AsyncGenerator[str, None]:
+async def stream_answer(
+    question: str,
+    sources: list[dict],
+    message_id: str | None = None,
+) -> AsyncGenerator[str, None]:
     """
     SSE generator that:
       1. Yields 'sources' event immediately with retrieved passages.
       2. Tries Gemini → Mistral → Gemma in order, streaming 'token' events.
-      3. Yields 'done' event with the full concatenated answer.
+      3. Yields 'done' event with the full concatenated answer and message_id.
       4. On total failure, yields 'error' event.
+
+    Args:
+        question:   Original user question (used for prompting)
+        sources:    Retrieved passages from hybrid retrieval pipeline
+        message_id: Pre-generated UUID for this Q&A pair (for feedback tracking)
 
     Each event follows the format:
         event: <type>
@@ -130,7 +139,11 @@ async def stream_answer(question: str, sources: list[dict]) -> AsyncGenerator[st
 
             if full_answer.strip():
                 rag_generation_latency_seconds.labels(model=layer["name"]).observe(time.perf_counter() - t0)
-                yield _sse("done", {"full_answer": full_answer, "model": layer["name"]})
+                yield _sse("done", {
+                    "full_answer": full_answer,
+                    "model": layer["name"],
+                    "message_id": message_id,
+                })
                 logger.info(f"{layer['name']} succeeded — {len(full_answer)} chars")
                 return
 

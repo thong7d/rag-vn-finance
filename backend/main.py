@@ -17,6 +17,7 @@ from prometheus_fastapi_instrumentator import Instrumentator
 
 from core.config import get_settings
 from core.logging import setup_logger
+from db.engine import init_db, dispose_db
 from routers.ask import router
 from services import retrieval as retrieval_service
 from services.sqlite_loader import get_sqlite_path
@@ -29,6 +30,9 @@ async def lifespan(app: FastAPI):
     """Application lifecycle manager — runs startup/shutdown logic."""
     settings = get_settings()
     logger.info("=== RAG Backend Starting ===")
+
+    # Step 0: Initialize PostgreSQL connection pool (if DATABASE_URL set)
+    init_db()
 
     # Step 1: Download SQLite FTS5 DB from HF Hub (cached after first download)
     logger.info("Step 1/3: Loading SQLite FTS5 DB from HuggingFace Hub...")
@@ -79,6 +83,7 @@ async def lifespan(app: FastAPI):
 
     # Shutdown
     logger.info("=== RAG Backend Shutting Down ===")
+    await dispose_db()
 
 
 def create_app() -> FastAPI:

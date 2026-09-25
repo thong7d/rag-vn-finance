@@ -17,6 +17,8 @@ On any step failure:
 
 import asyncio
 import json
+import time
+import uuid
 
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
@@ -58,16 +60,29 @@ def _classify_error(e: Exception) -> str:
 
 # ── Main Pipeline Generator ───────────────────────────────────────────────────
 
-async def _run_pipeline(question: str, decompose: bool = False):
+async def _run_pipeline(
+    question: str,
+    decompose: bool,
+    session_id: str,
+    user_id: str,
+    message_id: str,
+):
     """
     Full async RAG pipeline as an SSE generator.
 
     Event sequence:
       [decomposition] → progress (embedding) → progress (sparse_search) → progress (rerank)
-      → sources → token × N → done
+      → sources → token × N → done (includes message_id)
       → error (on failure)
     """
     settings = get_settings()
+    t0 = time.perf_counter()
+
+    # Collected for audit logging
+    final_answer = ""
+    final_model = ""
+    final_sources: list[dict] = []
+    final_sub_queries: list[str] | None = None
 
     # ── Step 0 (optional): Query Decomposition ─────────────────────────────
     queries = [question]  # default: single query
@@ -80,6 +95,7 @@ async def _run_pipeline(question: str, decompose: bool = False):
         try:
             sub_queries = await asyncio.to_thread(decompose_query, question)
             queries = sub_queries
+            final_sub_queries = sub_queries
             yield _sse("decomposition", {
                 "original": question,
                 "sub_queries": sub_queries,
@@ -155,14 +171,45 @@ async def _run_pipeline(question: str, decompose: bool = False):
             all_dense,
             all_sparse,
         )
+        final_sources = sources
     except Exception as e:
         logger.error(f"Rerank failed: {e}")
         yield _sse("error", {"message": _classify_error(e), "detail": str(e)})
         return
 
     # ── Step 4: LLM Generation (async SSE stream) ─────────────────────────────
-    async for chunk in stream_answer(question, sources):
+    async for chunk in stream_answer(question, sources, message_id=message_id):
+        # Capture final answer and model from done event
+        if chunk.startswith("event: done"):
+            try:
+                data_line = [ln for ln in chunk.split("\n") if ln.startswith("data: ")]
+                if data_line:
+                    done_data = json.loads(data_line[0][6:])
+                    final_answer = done_data.get("full_answer", "")
+                    final_model = done_data.get("model", "")
+            except Exception:
+                pass
         yield chunk
+
+    # ── Step 5: Fire-and-forget async audit log ───────────────────────────────
+    latency_ms = int((time.perf_counter() - t0) * 1000)
+    if final_answer:
+        try:
+            from services.audit_logger import log_chat_message
+            asyncio.create_task(log_chat_message(
+                session_id=session_id,
+                user_id=user_id,
+                message_id=message_id,
+                question=question,
+                answer=final_answer,
+                model_used=final_model or None,
+                latency_ms=latency_ms,
+                decompose_enabled=decompose,
+                sub_queries=final_sub_queries,
+                sources=final_sources,
+            ))
+        except Exception as e:
+            logger.warning(f"Failed to schedule audit log task (non-fatal): {e}")
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────
@@ -170,6 +217,8 @@ async def _run_pipeline(question: str, decompose: bool = False):
 class AskRequest(BaseModel):
     question: str
     decompose: bool = False
+    session_id: str = ""   # browser session UUID (from localStorage)
+    user_id: str = ""      # browser user UUID (from localStorage)
 
 
 @router.post("/api/ask")
@@ -182,7 +231,7 @@ async def ask(request: AskRequest):
       progress: {step, label, eta_s}   × 3  (embedding, sparse_search, rerank)
       sources:  {sources: [...]}
       token:    {token: str, model: str}  × N
-      done:     {full_answer: str, model: str}
+      done:     {full_answer: str, model: str, message_id: str}
       error:    {message: str, detail: str}   — on any failure
     """
     question = request.question.strip()
@@ -191,10 +240,21 @@ async def ask(request: AskRequest):
             yield _sse("error", {"message": "Question cannot be empty.", "detail": ""})
         return StreamingResponse(_empty(), media_type="text/event-stream")
 
-    logger.info(f"Question: {question[:80]}... | decompose={request.decompose}")
+    # Generate session and user IDs if not provided by frontend
+    session_id = request.session_id.strip() or str(uuid.uuid4())
+    user_id = request.user_id.strip() or f"anon_{str(uuid.uuid4())[:8]}"
+    message_id = str(uuid.uuid4())  # unique ID for this Q&A pair
+
+    logger.info(f"Question: {question[:80]}... | decompose={request.decompose} | session={session_id[:8]}...")
 
     return StreamingResponse(
-        _run_pipeline(question, decompose=request.decompose),
+        _run_pipeline(
+            question,
+            decompose=request.decompose,
+            session_id=session_id,
+            user_id=user_id,
+            message_id=message_id,
+        ),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

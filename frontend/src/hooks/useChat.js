@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef } from "react";
-import { streamAsk } from "../services/api";
+import { streamAsk, getUserId, getSessionId, newSession } from "../services/api";
 
 /**
  * useChat — manages chat state and SSE streaming lifecycle.
@@ -14,8 +14,12 @@ import { streamAsk } from "../services/api";
  *   progressStep  - { step, label, eta_s } | null — current pipeline step
  *   etaRemaining  - countdown seconds remaining for current step
  *   subQueries    - string[] — decomposed sub-queries (empty if decompose=false)
+ *   messageId     - UUID of the last completed message (for feedback)
+ *   sessionId     - current chat session UUID
+ *   userId        - persistent anonymous user UUID
  *   submit(q, decompose)  - async function to start a new query
- *   reset()       - clear all state
+ *   reset()       - clear answer state (keeps session)
+ *   startNewSession() - generate a new session UUID
  */
 export function useChat() {
   const [answer, setAnswer] = useState("");
@@ -27,6 +31,14 @@ export function useChat() {
   const [progressStep, setProgressStep] = useState(null);
   const [etaRemaining, setEtaRemaining] = useState(0);
   const [subQueries, setSubQueries] = useState([]);
+  const [messageId, setMessageId] = useState(null);
+
+  // Session & user identity (stable across renders)
+  const [sessionId, setSessionId] = useState(() => {
+    // Restore existing session or create new one
+    return getSessionId() || newSession();
+  });
+  const [userId] = useState(() => getUserId());
 
   const abortRef = useRef(false);
   const etaIntervalRef = useRef(null);
@@ -59,6 +71,21 @@ export function useChat() {
 
   // ── Actions ───────────────────────────────────────────────────────────────
 
+  const startNewSession = useCallback(() => {
+    const sid = newSession();
+    setSessionId(sid);
+    setAnswer("");
+    setSources([]);
+    setError("");
+    setActiveModel("");
+    setProgressStep(null);
+    setEtaRemaining(0);
+    setSubQueries([]);
+    setMessageId(null);
+    setStatus("idle");
+    return sid;
+  }, []);
+
   const reset = useCallback(() => {
     abortRef.current = true;
     stopCountdown();
@@ -71,6 +98,7 @@ export function useChat() {
     setProgressStep(null);
     setEtaRemaining(0);
     setSubQueries([]);
+    setMessageId(null);
   }, []);
 
   const submit = useCallback(
@@ -86,11 +114,12 @@ export function useChat() {
       setProgressStep(null);
       setEtaRemaining(0);
       setSubQueries([]);
+      setMessageId(null);
       setIsLoading(true);
       setStatus("retrieving");
 
       try {
-        for await (const event of streamAsk(question, decompose)) {
+        for await (const event of streamAsk(question, decompose, sessionId, userId)) {
           if (abortRef.current) break;
 
           switch (event.type) {
@@ -121,6 +150,7 @@ export function useChat() {
             case "done":
               stopCountdown();
               if (event.data.model) setActiveModel(event.data.model);
+              if (event.data.message_id) setMessageId(event.data.message_id);
               setProgressStep(null);
               setStatus("done");
               break;
@@ -147,7 +177,7 @@ export function useChat() {
         setIsLoading(false);
       }
     },
-    [isLoading]
+    [isLoading, sessionId, userId]
   );
 
   return {
@@ -160,8 +190,12 @@ export function useChat() {
     progressStep,
     etaRemaining,
     subQueries,
+    messageId,
+    sessionId,
+    userId,
     submit,
     reset,
+    startNewSession,
   };
 }
 
@@ -179,7 +213,7 @@ function classifyNetworkError(err) {
     msg.includes("load failed") ||
     msg.includes("network request failed")
   ) {
-    return "⏳ Cannot reach backend. It may be starting up (cold start ~30s). Please try again."
+    return "⏳ Cannot reach backend. It may be starting up (cold start ~30s). Please try again.";
   }
   if (msg.includes("http 5")) {
     return `⛔ Server error (${err.message}). Please try again later.`;
