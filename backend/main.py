@@ -18,11 +18,15 @@ from prometheus_fastapi_instrumentator import Instrumentator
 from core.config import get_settings
 from core.logging import setup_logger
 from db.engine import init_db, dispose_db
-from routers.ask import router
+from routers.ask import router as ask_router
+from routers.feedback import router as feedback_router
+from routers.sessions import router as sessions_router
+from routers.admin import router as admin_router
 from services import retrieval as retrieval_service
 from services.sqlite_loader import get_sqlite_path
 
 logger = setup_logger("Main")
+
 
 
 @asynccontextmanager
@@ -103,7 +107,10 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
-    app.include_router(router)
+    app.include_router(ask_router)
+    app.include_router(feedback_router, prefix="/api")
+    app.include_router(sessions_router, prefix="/api")
+    app.include_router(admin_router, prefix="/api")
 
     Instrumentator().instrument(app).expose(app, endpoint="/metrics")
 

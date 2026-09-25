@@ -148,3 +148,213 @@ async def log_evaluation(
         logger.info(f"AuditLogger: logged evaluation [{status}] | {run_type}")
     except Exception as e:
         logger.warning(f"AuditLogger: failed to log evaluation (non-fatal): {e}")
+
+
+async def save_feedback(
+    message_id: str,
+    user_id: str,
+    vote: str,
+    comment: Optional[str] = None,
+) -> dict:
+    """Save or update user feedback (thumbs up/down) for a message."""
+    if not is_db_enabled():
+        return {"status": "disabled", "message": "Database not configured"}
+
+    from db.models import UserFeedback
+    from sqlalchemy import select
+
+    try:
+        async with AsyncSessionLocal() as db_session:
+            existing = await db_session.execute(
+                select(UserFeedback).where(
+                    UserFeedback.message_id == message_id,
+                    UserFeedback.user_id == user_id,
+                )
+            )
+            row = existing.scalar_one_or_none()
+
+            if row:
+                row.vote = vote
+                if comment is not None:
+                    row.comment = comment
+            else:
+                feedback = UserFeedback(
+                    id=str(uuid.uuid4()),
+                    message_id=message_id,
+                    user_id=user_id,
+                    vote=vote,
+                    comment=comment,
+                )
+                db_session.add(feedback)
+
+            await db_session.commit()
+            logger.info(f"AuditLogger: saved feedback [{vote}] for msg {message_id[:8]}...")
+            return {"status": "ok", "message": "Feedback recorded"}
+    except Exception as e:
+        logger.warning(f"AuditLogger: failed to save feedback: {e}")
+        return {"status": "error", "message": str(e)}
+
+
+async def get_user_sessions(user_id: str, limit: int = 20) -> list[dict]:
+    """Fetch recent chat sessions for a specific user ID."""
+    if not is_db_enabled():
+        return []
+
+    from db.models import ChatSession
+    from sqlalchemy import select
+
+    try:
+        async with AsyncSessionLocal() as db_session:
+            stmt = (
+                select(ChatSession)
+                .where(ChatSession.user_id == user_id)
+                .order_by(ChatSession.updated_at.desc())
+                .limit(limit)
+            )
+            result = await db_session.execute(stmt)
+            sessions = result.scalars().all()
+
+            return [
+                {
+                    "session_id": s.id,
+                    "first_question": s.first_question or "New Chat",
+                    "created_at": s.created_at.isoformat() if s.created_at else None,
+                    "updated_at": s.updated_at.isoformat() if s.updated_at else None,
+                }
+                for s in sessions
+            ]
+    except Exception as e:
+        logger.warning(f"AuditLogger: failed to fetch sessions: {e}")
+        return []
+
+
+async def get_session_messages(session_id: str) -> list[dict]:
+    """Fetch all messages for a given session ID."""
+    if not is_db_enabled():
+        return []
+
+    from db.models import ChatMessage
+    from sqlalchemy import select
+
+    try:
+        async with AsyncSessionLocal() as db_session:
+            stmt = (
+                select(ChatMessage)
+                .where(ChatMessage.session_id == session_id)
+                .order_by(ChatMessage.created_at.asc())
+            )
+            result = await db_session.execute(stmt)
+            messages = result.scalars().all()
+
+            return [
+                {
+                    "message_id": m.id,
+                    "session_id": m.session_id,
+                    "question": m.question,
+                    "answer": m.answer,
+                    "model_used": m.model_used,
+                    "latency_ms": m.latency_ms,
+                    "decompose_enabled": m.decompose_enabled,
+                    "sub_queries": m.sub_queries,
+                    "source_count": m.source_count,
+                    "created_at": m.created_at.isoformat() if m.created_at else None,
+                }
+                for m in messages
+            ]
+    except Exception as e:
+        logger.warning(f"AuditLogger: failed to fetch session messages: {e}")
+        return []
+
+
+async def get_admin_metrics() -> dict:
+    """Compute aggregate observability metrics for the Admin Dashboard."""
+    if not is_db_enabled():
+        return {"enabled": False, "message": "Database not configured"}
+
+    from db.models import ChatMessage, ChatSession, UserFeedback, EvaluationLog
+    from sqlalchemy import select, func
+
+    try:
+        async with AsyncSessionLocal() as db_session:
+            total_chats = (await db_session.execute(select(func.count()).select_from(ChatMessage))).scalar() or 0
+            total_sessions = (await db_session.execute(select(func.count()).select_from(ChatSession))).scalar() or 0
+
+            # Feedbacks
+            up_votes = (
+                await db_session.execute(
+                    select(func.count()).select_from(UserFeedback).where(UserFeedback.vote == "up")
+                )
+            ).scalar() or 0
+            down_votes = (
+                await db_session.execute(
+                    select(func.count()).select_from(UserFeedback).where(UserFeedback.vote == "down")
+                )
+            ).scalar() or 0
+
+            # Latency
+            avg_latency = (
+                await db_session.execute(select(func.avg(ChatMessage.latency_ms)))
+            ).scalar() or 0.0
+
+            # Model usage breakdown
+            model_counts_raw = (
+                await db_session.execute(
+                    select(ChatMessage.model_used, func.count(ChatMessage.id)).group_by(ChatMessage.model_used)
+                )
+            ).all()
+            model_breakdown = {m: c for m, c in model_counts_raw if m}
+
+            # Recent messages
+            recent_msgs_raw = (
+                await db_session.execute(
+                    select(ChatMessage).order_by(ChatMessage.created_at.desc()).limit(10)
+                )
+            ).scalars().all()
+
+            recent_messages = [
+                {
+                    "message_id": m.id,
+                    "question": m.question,
+                    "model_used": m.model_used,
+                    "latency_ms": m.latency_ms,
+                    "created_at": m.created_at.isoformat() if m.created_at else None,
+                }
+                for m in recent_msgs_raw
+            ]
+
+            # Recent evaluation logs
+            eval_logs_raw = (
+                await db_session.execute(
+                    select(EvaluationLog).order_by(EvaluationLog.created_at.desc()).limit(10)
+                )
+            ).scalars().all()
+
+            recent_evaluations = [
+                {
+                    "id": ev.id,
+                    "run_type": ev.run_type,
+                    "question": ev.question,
+                    "faithfulness": ev.faithfulness,
+                    "answer_relevancy": ev.answer_relevancy,
+                    "status": ev.status,
+                    "run_date": ev.run_date.isoformat() if ev.run_date else None,
+                }
+                for ev in eval_logs_raw
+            ]
+
+            return {
+                "enabled": True,
+                "total_chats": total_chats,
+                "total_sessions": total_sessions,
+                "up_votes": up_votes,
+                "down_votes": down_votes,
+                "positive_rate": round(up_votes / (up_votes + down_votes) * 100, 1) if (up_votes + down_votes) > 0 else 0,
+                "avg_latency_ms": round(float(avg_latency), 1),
+                "model_breakdown": model_breakdown,
+                "recent_messages": recent_messages,
+                "recent_evaluations": recent_evaluations,
+            }
+    except Exception as e:
+        logger.warning(f"AuditLogger: failed to compute admin metrics: {e}")
+        return {"enabled": True, "error": str(e)}
+
