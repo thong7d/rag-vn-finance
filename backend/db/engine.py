@@ -36,6 +36,9 @@ def init_db() -> bool:
             pool_pre_ping=True,
             pool_size=5,
             max_overflow=10,
+            # Neon requires SSL; sslmode=require is stripped from async URL
+            # (asyncpg uses connect_args instead of URL params for SSL)
+            connect_args={"ssl": True},
         )
         AsyncSessionLocal = async_sessionmaker(
             bind=engine,

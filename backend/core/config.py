@@ -3,8 +3,10 @@ config.py — Pydantic Settings for FastAPI backend.
 All values are loaded from environment variables (set in Render dashboard).
 """
 
-from pydantic_settings import BaseSettings, SettingsConfigDict
 from functools import lru_cache
+from urllib.parse import urlparse, urlencode, parse_qs, urlunparse
+
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -47,14 +49,29 @@ class Settings(BaseSettings):
 
     @property
     def async_database_url(self) -> str | None:
+        """
+        Convert DATABASE_URL to asyncpg-compatible format:
+          1. Switch scheme to postgresql+asyncpg://
+          2. Strip params unsupported by asyncpg (sslmode, channel_binding)
+             SSL is handled separately via connect_args in engine.py.
+        """
         if not self.database_url:
             return None
         url = self.database_url
+        # Switch scheme
         if url.startswith("postgresql://"):
             url = url.replace("postgresql://", "postgresql+asyncpg://", 1)
         elif url.startswith("postgres://"):
             url = url.replace("postgres://", "postgresql+asyncpg://", 1)
-        return url
+
+        # Strip asyncpg-incompatible query params (libpq-only)
+        _STRIP_PARAMS = {"sslmode", "channel_binding"}
+        parsed = urlparse(url)
+        qs = parse_qs(parsed.query, keep_blank_values=True)
+        filtered_qs = {k: v for k, v in qs.items() if k not in _STRIP_PARAMS}
+        clean_query = urlencode(filtered_qs, doseq=True)
+        cleaned = parsed._replace(query=clean_query)
+        return urlunparse(cleaned)
 
     @property
     def cors_origins(self) -> list[str]:
