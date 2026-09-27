@@ -36,8 +36,8 @@ def _strip_thinking(text: str) -> str:
 
 
 def evaluate_with_groq(question, context, answer, api_key, max_retries=4):
-    # Truncate context to ~1200 chars (~300 tokens) to ensure total input tokens stay under ~600
-    prompt = f"Question: {question[:250]}\n\nContext: {context[:1200]}\n\nAnswer: {answer[:500]}"
+    # Pass up to 3000 chars of retrieved context so Judge receives full evidence
+    prompt = f"Question: {question[:300]}\n\nContext: {context[:3000]}\n\nAnswer: {answer[:1000]}"
     
     headers = {
         "Authorization": f"Bearer {api_key}",
