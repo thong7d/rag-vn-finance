@@ -2,7 +2,7 @@ name: Nightly Regression
 
 on:
   schedule:
-    - cron: "0 2 * * *"   # 2:00 UTC daily = 9:00 AM Vietnam
+    - cron: "0 14 * * *"   # 14:00 UTC daily = 21:00 (9:00 PM) Vietnam time
   workflow_dispatch: {}    # Manual trigger
   push:
     branches: ["main"]  # Also run on push to keep it scoped
@@ -21,7 +21,9 @@ jobs:
           python-version: "3.11"
       
       - name: Install dependencies
-        run: pip install requests
+        run: |
+          pip install requests
+          pip install -r backend/requirements.txt
         
       - name: Run Regression Test
         run: python tests/regression_test.py
@@ -29,6 +31,7 @@ jobs:
           # Falls back to the public Render URL if the secret is not configured
           BACKEND_URL: ${{ secrets.RENDER_BACKEND_URL || 'https://rag-vn-finance-backend.onrender.com' }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
           
       - name: Upload Regression Report
         uses: actions/upload-artifact@v4
@@ -36,3 +39,4 @@ jobs:
         with:
           name: regression-report
           path: tests/regression_report.csv
+

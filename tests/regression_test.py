@@ -124,6 +124,37 @@ def get_answer_from_backend(backend_url, question):
         print(f"Backend API Exception: {e}")
         return "", []
 
+# Add backend directory to sys.path to enable importing db/services modules
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "backend")))
+import asyncio
+
+
+def _log_eval_to_neon(question, answer, context, faithfulness, answer_relevancy, status="PASSED"):
+    """Optionally push evaluation log to Neon PostgreSQL if DATABASE_URL is configured."""
+    if not os.environ.get("DATABASE_URL"):
+        return
+    try:
+        from db.engine import init_db
+        from services.audit_logger import log_evaluation
+
+        if init_db():
+            asyncio.run(
+                log_evaluation(
+                    run_type="nightly_ci",
+                    question=question,
+                    answer=answer,
+                    context_snippet=context,
+                    faithfulness=faithfulness,
+                    answer_relevancy=answer_relevancy,
+                    judge_model="qwen/qwen3.8-27b",
+                    status=status,
+                )
+            )
+            print("  📊 Pushed evaluation result to Neon evaluation_logs")
+    except Exception as e:
+        print(f"  ⚠️ Could not push eval to Neon (non-fatal): {e}")
+
+
 def main():
     backend_url = os.environ.get("BACKEND_URL")
     if not backend_url:
@@ -173,6 +204,7 @@ def main():
                 print("  ❌ Failed to get answer from backend")
                 writer.writerow({'id': i, 'question': question, 'faithfulness': 0, 'answer_relevancy': 0, 'status': 'failed_backend'})
                 results.append((0.0, 0.0))
+                _log_eval_to_neon(question, "", "", 0.0, 0.0, status="FAILED")
                 continue
                 
             # Call Groq Judge
@@ -181,6 +213,9 @@ def main():
             
             writer.writerow({'id': i, 'question': question, 'faithfulness': faithfulness, 'answer_relevancy': answer_relevancy, 'status': 'success'})
             results.append((faithfulness, answer_relevancy))
+            
+            eval_status = "PASSED" if (faithfulness >= 0.5 and answer_relevancy >= 0.5) else "FAILED"
+            _log_eval_to_neon(question, answer, context, faithfulness, answer_relevancy, status=eval_status)
             
             # Avoid hitting Groq 8K TPM limit and Gemini 15 RPM limit
             if i < len(samples) - 1:
