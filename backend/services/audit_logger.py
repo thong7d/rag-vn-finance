@@ -12,8 +12,8 @@ import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
+import db.engine as db_engine
 from core.logging import setup_logger
-from db.engine import AsyncSessionLocal, is_db_enabled
 from db.models import ChatMessage, ChatSession
 
 logger = setup_logger("AuditLogger")
@@ -71,7 +71,7 @@ async def log_chat_message(
         sub_queries:      List of sub-queries if decomposed, else None
         sources:          List of source dicts from retrieval pipeline
     """
-    if not is_db_enabled():
+    if not db_engine.is_db_enabled():
         return
 
     try:
@@ -83,7 +83,7 @@ async def log_chat_message(
         }
         source_count = len(sources)
 
-        async with AsyncSessionLocal() as db_session:
+        async with db_engine.AsyncSessionLocal() as db_session:
             # Upsert session first (FK constraint)
             await _upsert_session(db_session, session_id, user_id, question)
 
@@ -125,13 +125,13 @@ async def log_evaluation(
     Write one evaluation result to PostgreSQL evaluation_logs table.
     Can be called from regression_test.py or manually.
     """
-    if not is_db_enabled():
+    if not db_engine.is_db_enabled():
         return
 
     from db.models import EvaluationLog
 
     try:
-        async with AsyncSessionLocal() as db_session:
+        async with db_engine.AsyncSessionLocal() as db_session:
             log = EvaluationLog(
                 id=str(uuid.uuid4()),
                 run_type=run_type,
@@ -157,14 +157,14 @@ async def save_feedback(
     comment: Optional[str] = None,
 ) -> dict:
     """Save or update user feedback (thumbs up/down) for a message."""
-    if not is_db_enabled():
+    if not db_engine.is_db_enabled():
         return {"status": "disabled", "message": "Database not configured"}
 
     from db.models import UserFeedback
     from sqlalchemy import select
 
     try:
-        async with AsyncSessionLocal() as db_session:
+        async with db_engine.AsyncSessionLocal() as db_session:
             existing = await db_session.execute(
                 select(UserFeedback).where(
                     UserFeedback.message_id == message_id,
@@ -197,14 +197,14 @@ async def save_feedback(
 
 async def get_user_sessions(user_id: str, limit: int = 20) -> list[dict]:
     """Fetch recent chat sessions for a specific user ID."""
-    if not is_db_enabled():
+    if not db_engine.is_db_enabled():
         return []
 
     from db.models import ChatSession
     from sqlalchemy import select
 
     try:
-        async with AsyncSessionLocal() as db_session:
+        async with db_engine.AsyncSessionLocal() as db_session:
             stmt = (
                 select(ChatSession)
                 .where(ChatSession.user_id == user_id)
@@ -230,14 +230,14 @@ async def get_user_sessions(user_id: str, limit: int = 20) -> list[dict]:
 
 async def get_session_messages(session_id: str) -> list[dict]:
     """Fetch all messages for a given session ID."""
-    if not is_db_enabled():
+    if not db_engine.is_db_enabled():
         return []
 
     from db.models import ChatMessage
     from sqlalchemy import select
 
     try:
-        async with AsyncSessionLocal() as db_session:
+        async with db_engine.AsyncSessionLocal() as db_session:
             stmt = (
                 select(ChatMessage)
                 .where(ChatMessage.session_id == session_id)
@@ -268,14 +268,14 @@ async def get_session_messages(session_id: str) -> list[dict]:
 
 async def get_admin_metrics() -> dict:
     """Compute aggregate observability metrics for the Admin Dashboard."""
-    if not is_db_enabled():
+    if not db_engine.is_db_enabled():
         return {"enabled": False, "message": "Database not configured"}
 
     from db.models import ChatMessage, ChatSession, UserFeedback, EvaluationLog
     from sqlalchemy import select, func
 
     try:
-        async with AsyncSessionLocal() as db_session:
+        async with db_engine.AsyncSessionLocal() as db_session:
             total_chats = (await db_session.execute(select(func.count()).select_from(ChatMessage))).scalar() or 0
             total_sessions = (await db_session.execute(select(func.count()).select_from(ChatSession))).scalar() or 0
 
