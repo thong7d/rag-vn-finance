@@ -11,16 +11,16 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     # ── API Keys ─────────────────────────────────────────────────────────────
-    openrouter_api_key: str
-    gemini_api_key: str
+    openrouter_api_key: str = ""
+    gemini_api_key: str = ""
     gemini_api_key_2: str | None = None
-    mistral_api_key: str
-    cohere_api_key: str
-    hf_token: str
+    mistral_api_key: str = ""
+    cohere_api_key: str = ""
+    hf_token: str = ""
 
     # ── Qdrant Cloud ──────────────────────────────────────────────────────────
-    qdrant_url: str
-    qdrant_api_key: str
+    qdrant_url: str = ""
+    qdrant_api_key: str = ""
 
     # ── BM25 on HuggingFace Hub ───────────────────────────────────────────────
     hf_bm25_repo: str = "thong7d/rag-vn-finance-bm25"

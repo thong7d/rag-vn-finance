@@ -131,7 +131,9 @@ import asyncio
 
 def _log_eval_to_neon(question, answer, context, faithfulness, answer_relevancy, status="PASSED"):
     """Optionally push evaluation log to Neon PostgreSQL if DATABASE_URL is configured."""
-    if not os.environ.get("DATABASE_URL"):
+    db_url = os.environ.get("DATABASE_URL")
+    if not db_url:
+        print("  ℹ️ DATABASE_URL secret is not set in CI environment. Skipping push to Neon.")
         return
     try:
         from db.engine import init_db
@@ -151,6 +153,8 @@ def _log_eval_to_neon(question, answer, context, faithfulness, answer_relevancy,
                 )
             )
             print("  📊 Pushed evaluation result to Neon evaluation_logs")
+        else:
+            print("  ⚠️ DB Engine init_db() returned False — check DATABASE_URL string format.")
     except Exception as e:
         print(f"  ⚠️ Could not push eval to Neon (non-fatal): {e}")
 
