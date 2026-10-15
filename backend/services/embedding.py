@@ -31,7 +31,12 @@ class OpenRouterEmbeddingAPI:
         if self._client is None:
             logger.info(f"Connecting to Gradio Space: {self.space_id}...")
             if self.hf_token:
-                self._client = Client(self.space_id, hf_token=self.hf_token)
+                try:
+                    # gradio_client >= 1.0.0 uses 'token'
+                    self._client = Client(self.space_id, token=self.hf_token)
+                except TypeError:
+                    # legacy gradio_client (< 1.0.0) uses 'hf_token'
+                    self._client = Client(self.space_id, hf_token=self.hf_token)
             else:
                 self._client = Client(self.space_id)
             logger.info(f"Connected to Gradio Space: {self.space_id}")
