@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     mistral_api_key: str = ""
     cohere_api_key: str = ""
     hf_token: str = ""
+    hf_embedding_space: str = "thong7d/e5-embedding-api"
 
     # ── Qdrant Cloud ──────────────────────────────────────────────────────────
     qdrant_url: str = ""
