@@ -1,11 +1,12 @@
 """
-generation.py — 4-layer LLM generation with SSE streaming for the FastAPI backend.
+generation.py — Multi-layer LLM generation with SSE streaming for the FastAPI backend.
 
 Fallback order:
-  1. Gemini (gemini-3.1-flash-lite)
-  2. Gemini-2 (gemini-2.5-flash via secondary API key)
-  3. Mistral (mistral-small-2506 via Mistral API)
+  1. Gemini (gemini-3.5-flash-lite)
+  2. Gemini-Key2 (gemini-3.5-flash-lite via secondary API key if set)
+  3. Gemini-Flash (gemini-3.8-flash)
   4. Gemma (gemma-4-31b-it via Google AI Studio)
+  5. Mistral (mistral-small-2506 via Mistral API)
 
 Each layer streams tokens as SSE events to the client.
 """
@@ -83,18 +84,35 @@ async def stream_answer(
     yield _sse("sources", {"sources": sources})
 
     # ── Layer definitions ─────────────────────────────────────────────────────
-    layers = [
+    candidate_layers = [
         {
             "name": "Gemini",
             "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
             "api_key": settings.gemini_api_key,
-            "model": "gemini-3.1-flash-lite",
+            "model": "gemini-3.5-flash-lite",
+        },
+    ]
+
+    if settings.gemini_api_key_2:
+        candidate_layers.append({
+            "name": "Gemini-Key2",
+            "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
+            "api_key": settings.gemini_api_key_2,
+            "model": "gemini-3.5-flash-lite",
+        })
+
+    candidate_layers.extend([
+        {
+            "name": "Gemini-Flash",
+            "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
+            "api_key": settings.gemini_api_key,
+            "model": "gemini-3.8-flash",
         },
         {
-            "name": "Gemini-2",
+            "name": "Gemma",
             "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
-            "api_key": settings.gemini_api_key_2 or settings.gemini_api_key,
-            "model": "gemini-2.5-flash",
+            "api_key": settings.gemini_api_key,
+            "model": "gemma-4-31b-it",
         },
         {
             "name": "Mistral",
@@ -102,13 +120,10 @@ async def stream_answer(
             "api_key": settings.mistral_api_key,
             "model": "mistral-small-2506",
         },
-        {
-            "name": "Gemma",
-            "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
-            "api_key": settings.gemini_api_key,   # Google AI Studio for Gemma
-            "model": "gemma-4-31b-it",
-        },
-    ]
+    ])
+
+    # Filter out layers with empty API keys
+    layers = [l for l in candidate_layers if l.get("api_key")]
 
     full_answer = ""
     last_error = ""

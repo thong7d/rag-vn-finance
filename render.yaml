@@ -20,7 +20,15 @@ services:
         sync: false
       - key: GEMINI_API_KEY
         sync: false
+      - key: GEMINI_API_KEY_2
+        sync: false
+      - key: MISTRAL_API_KEY
+        sync: false
       - key: COHERE_API_KEY
         sync: false
       - key: HF_TOKEN
         sync: false
+      - key: HF_EMBEDDING_SPACE
+        value: thong7d/e5-embedding-api
+      - key: HF_BM25_REPO
+        value: thong7d/rag-vn-finance-bm25
