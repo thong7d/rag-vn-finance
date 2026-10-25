@@ -1,10 +1,11 @@
 """
-generation.py — 3-layer LLM generation with SSE streaming for the FastAPI backend.
+generation.py — 4-layer LLM generation with SSE streaming for the FastAPI backend.
 
 Fallback order:
   1. Gemini (gemini-3.1-flash-lite)
-  2. Mistral (mistral-small-2506 via Mistral API)
-  3. Gemma (gemma-4-31b-it via Google AI Studio)
+  2. Gemini-2 (gemini-2.5-flash via secondary API key)
+  3. Mistral (mistral-small-2506 via Mistral API)
+  4. Gemma (gemma-4-31b-it via Google AI Studio)
 
 Each layer streams tokens as SSE events to the client.
 """
@@ -90,6 +91,12 @@ async def stream_answer(
             "model": "gemini-3.1-flash-lite",
         },
         {
+            "name": "Gemini-2",
+            "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
+            "api_key": settings.gemini_api_key_2 or settings.gemini_api_key,
+            "model": "gemini-2.5-flash",
+        },
+        {
             "name": "Mistral",
             "base_url": "https://api.mistral.ai/v1",
             "api_key": settings.mistral_api_key,
@@ -99,7 +106,7 @@ async def stream_answer(
             "name": "Gemma",
             "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
             "api_key": settings.gemini_api_key,   # Google AI Studio for Gemma
-            "model": "gemma-2-27b-it",
+            "model": "gemma-4-31b-it",
         },
     ]
 
