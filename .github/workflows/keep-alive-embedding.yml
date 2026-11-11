@@ -30,11 +30,11 @@ jobs:
           import os
           from gradio_client import Client
 
-          token = os.environ.get("HF_TOKEN")
+          token = os.environ.get("HF_TOKEN", "").strip() or None
           space_id = "thong7d/e5-embedding-api"
-          print(f"Connecting to {space_id}...")
+          print(f"Connecting to {space_id} (authenticated: {token is not None})...")
 
-          client = Client(space_id, token=token)
+          client = Client(space_id, token=token) if token else Client(space_id)
           res = client.predict(
               text="query: ping",
               api_name="/encode"
