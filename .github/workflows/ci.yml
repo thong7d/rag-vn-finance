@@ -53,4 +53,4 @@ jobs:
       - name: Run smoke test
         run: python tests/smoke_test.py
         env:
-          BACKEND_URL: ${{ secrets.RENDER_BACKEND_URL }}
+          BACKEND_URL: ${{ secrets.RENDER_BACKEND_URL || 'https://rag-vn-finance-backend.onrender.com' }}

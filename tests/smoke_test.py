@@ -34,44 +34,53 @@ def main():
         question = sample.get("question")
         print(f"[{i+1}/{len(samples)}] Testing: {question[:50]}...")
         
-        try:
-            # We use stream=True to parse SSE
-            response = requests.post(
-                f"{backend_url}/api/ask",
-                json={"question": question, "decompose": False},
-                stream=True,
-                timeout=60
-            )
-            
-            if response.status_code != 200:
-                print(f"  ❌ Failed: HTTP {response.status_code}")
-                continue
+        passed = False
+        for attempt in range(2):
+            try:
+                response = requests.post(
+                    f"{backend_url}/api/ask",
+                    json={"question": question, "decompose": False},
+                    stream=True,
+                    timeout=90
+                )
                 
-            has_sources = False
-            has_done = False
-            
-            # Read streaming response
-            for line in response.iter_lines():
-                if line:
-                    decoded = line.decode('utf-8')
-                    if decoded.startswith("event: sources"):
-                        has_sources = True
-                    elif decoded.startswith("event: done"):
-                        has_done = True
-                    elif decoded.startswith("event: error"):
-                        print(f"  ❌ Failed: Received SSE error event: {decoded}")
-                        break
-            
-            if has_sources and has_done:
-                print("  ✅ Passed")
-                success_count += 1
-            else:
-                print(f"  ❌ Failed: Missing expected SSE events (sources: {has_sources}, done: {has_done})")
+                if response.status_code != 200:
+                    print(f"  ⚠️ Attempt {attempt+1} HTTP {response.status_code}")
+                    time.sleep(5)
+                    continue
+                    
+                has_sources = False
+                has_done = False
                 
-        except Exception as e:
-            print(f"  ❌ Exception: {e}")
+                for line in response.iter_lines():
+                    if line:
+                        decoded = line.decode('utf-8')
+                        if decoded.startswith("event: sources"):
+                            has_sources = True
+                        elif decoded.startswith("event: done"):
+                            has_done = True
+                        elif decoded.startswith("event: error"):
+                            print(f"  ⚠️ Received SSE error event: {decoded}")
+                            break
+                
+                if has_sources and has_done:
+                    passed = True
+                    break
+                else:
+                    print(f"  ⚠️ Attempt {attempt+1} missing events (sources: {has_sources}, done: {has_done})")
+                    time.sleep(5)
+            except Exception as e:
+                print(f"  ⚠️ Attempt {attempt+1} Exception: {e}")
+                time.sleep(5)
+        
+        if passed:
+            print("  ✅ Passed")
+            success_count += 1
+        else:
+            print("  ❌ Failed after retries")
             
-        time.sleep(1) # Be nice to the API
+        if i < len(samples) - 1:
+            time.sleep(6) # Spacing requests to prevent hitting Gemini/Groq rate limits
         
     print(f"\nSmoke test complete: {success_count}/{len(samples)} passed.")
     if success_count < len(samples):
