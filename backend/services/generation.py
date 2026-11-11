@@ -123,7 +123,7 @@ async def stream_answer(
     ])
 
     # Filter out layers with empty API keys
-    layers = [l for l in candidate_layers if l.get("api_key")]
+    layers = [layer for layer in candidate_layers if layer.get("api_key")]
 
     full_answer = ""
     last_error = ""
