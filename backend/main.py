@@ -15,7 +15,6 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from prometheus_fastapi_instrumentator import Instrumentator
 
-from core.config import get_settings
 from core.logging import setup_logger
 from db.engine import init_db, dispose_db
 from routers.ask import router as ask_router
@@ -32,7 +31,6 @@ logger = setup_logger("Main")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifecycle manager — runs startup/shutdown logic."""
-    settings = get_settings()
     logger.info("=== RAG Backend Starting ===")
 
     # Step 0: Initialize PostgreSQL connection pool (if DATABASE_URL set)
