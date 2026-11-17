@@ -87,42 +87,48 @@ def evaluate_with_groq(question, context, answer, api_key, max_retries=4):
             
     return 0.0, 0.0
 
-def get_answer_from_backend(backend_url, question):
-    try:
-        response = requests.post(
-            f"{backend_url}/api/ask",
-            json={"question": question, "decompose": False},
-            stream=True,
-            timeout=60
-        )
-        
-        if response.status_code != 200:
-            return "", []
-            
-        full_answer = ""
-        sources = []
-        
-        for line in response.iter_lines():
-            if line:
-                decoded = line.decode('utf-8')
-                if decoded.startswith("event: sources"):
-                    # Extract json data on next line
-                    pass 
-                elif decoded.startswith("data: "):
-                    data_str = decoded[6:]
-                    try:
-                        data = json.loads(data_str)
-                        if "sources" in data:
-                            sources = [s.get("text", "") for s in data["sources"]]
-                        elif "full_answer" in data:
-                            full_answer = data["full_answer"]
-                    except:
-                        pass
-                        
-        return full_answer, sources
-    except Exception as e:
-        print(f"Backend API Exception: {e}")
-        return "", []
+def get_answer_from_backend(backend_url, question, max_retries=2):
+    for attempt in range(max_retries):
+        try:
+            response = requests.post(
+                f"{backend_url}/api/ask",
+                json={"question": question, "decompose": False},
+                stream=True,
+                timeout=90
+            )
+
+            if response.status_code != 200:
+                print(f"    ⚠️ Backend HTTP {response.status_code} (attempt {attempt+1}/{max_retries})")
+                time.sleep(5)
+                continue
+
+            full_answer = ""
+            sources = []
+
+            for line in response.iter_lines():
+                if line:
+                    decoded = line.decode('utf-8')
+                    if decoded.startswith("data: "):
+                        data_str = decoded[6:]
+                        try:
+                            data = json.loads(data_str)
+                            if "sources" in data:
+                                sources = [s.get("text", "") for s in data["sources"]]
+                            elif "full_answer" in data:
+                                full_answer = data["full_answer"]
+                        except Exception:
+                            pass
+
+            if full_answer:
+                return full_answer, sources
+            else:
+                print(f"    ⚠️ Empty answer from backend (attempt {attempt+1}/{max_retries})")
+                time.sleep(5)
+        except Exception as e:
+            print(f"    ⚠️ Backend API Exception (attempt {attempt+1}/{max_retries}): {e}")
+            time.sleep(5)
+
+    return "", []
 
 # Add backend directory to sys.path to enable importing db/services modules
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "backend")))

@@ -70,9 +70,31 @@ class OpenRouterEmbeddingAPI:
 
             # Handle if returned as stringified JSON or direct list
             if isinstance(raw_result, str):
-                vec = json.loads(raw_result)
+                try:
+                    vec = json.loads(raw_result)
+                except Exception:
+                    vec = raw_result
             else:
                 vec = raw_result
+
+            # Handle dict response (error / data wrapper / embedding field)
+            if isinstance(vec, dict):
+                if "data" in vec and isinstance(vec["data"], (list, tuple)):
+                    vec = vec["data"]
+                elif "embedding" in vec and isinstance(vec["embedding"], (list, tuple)):
+                    vec = vec["embedding"]
+                elif "result" in vec and isinstance(vec["result"], (list, tuple)):
+                    vec = vec["result"]
+                else:
+                    err_msg = vec.get("error") or vec.get("detail") or vec.get("message") or str(vec)
+                    raise RuntimeError(f"Gradio Space returned error object: {err_msg}")
+
+            # If nested list [[0.01, 0.02, ...]], unwrap first item
+            if isinstance(vec, (list, tuple)) and len(vec) == 1 and isinstance(vec[0], (list, tuple)):
+                vec = vec[0]
+
+            if not isinstance(vec, (list, tuple, np.ndarray)) or len(vec) == 0:
+                raise RuntimeError(f"Gradio Space returned invalid vector data: {type(vec)}")
 
             embeddings.append(vec)
 

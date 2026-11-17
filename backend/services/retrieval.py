@@ -26,7 +26,50 @@ logger = setup_logger("RetrievalService")
 # ── Module-level singletons (initialized once at startup via init_retrieval()) ──
 _qdrant_client: QdrantClient | None = None
 _embedding_model: OpenRouterEmbeddingAPI | None = None
-_chunk_meta: dict[str, dict] = {}  # chunk_id → {text, title, url}
+_chunk_cache: dict[str, dict] = {}  # bounded in-memory cache: chunk_id → {text, title, url}
+_MAX_CACHE_SIZE = 2000
+
+
+def _cache_chunk_payload(chunk_id: str, payload: dict) -> None:
+    """Store chunk payload in a bounded cache (prevent unbounded memory growth)."""
+    global _chunk_cache
+    if chunk_id and chunk_id not in _chunk_cache:
+        if len(_chunk_cache) >= _MAX_CACHE_SIZE:
+            to_remove = list(_chunk_cache.keys())[:500]
+            for k in to_remove:
+                _chunk_cache.pop(k, None)
+        _chunk_cache[chunk_id] = {
+            "text": payload.get("text", ""),
+            "title": payload.get("title", ""),
+            "url": payload.get("url", ""),
+        }
+
+
+def get_chunk_meta(chunk_ids: list[str]) -> dict[str, dict]:
+    """Fetch chunk metadata on-demand for specific IDs, using Qdrant filter if needed."""
+    global _chunk_cache, _qdrant_client
+    settings = get_settings()
+
+    missing = [cid for cid in chunk_ids if cid and (cid not in _chunk_cache or not _chunk_cache[cid].get("text"))]
+    if missing and _qdrant_client is not None:
+        try:
+            from qdrant_client.models import Filter, FieldCondition, MatchAny
+            scroll_filter = Filter(must=[FieldCondition(key="chunk_id", match=MatchAny(any=missing))])
+            pts, _ = _qdrant_client.scroll(
+                collection_name=f"vn_finance_{settings.chunk_strategy}",
+                scroll_filter=scroll_filter,
+                limit=len(missing),
+                with_payload=True,
+                with_vectors=False,
+            )
+            for p in pts:
+                cid = p.payload.get("chunk_id", "")
+                if cid:
+                    _cache_chunk_payload(cid, p.payload)
+        except Exception as e:
+            logger.warning(f"On-demand chunk metadata lookup error: {e}")
+
+    return {cid: _chunk_cache.get(cid, {}) for cid in chunk_ids}
 
 
 def tokenize_vi(text: str) -> list[str]:
@@ -36,22 +79,21 @@ def tokenize_vi(text: str) -> list[str]:
     return [t for t in text.split() if len(t) > 1]
 
 
-def init_retrieval(chunk_meta: dict[str, dict]):
+def init_retrieval(chunk_meta: dict[str, dict] | None = None):
     """
-    Called once at startup (lifespan) to initialize Qdrant client,
-    embedding model, and store chunk metadata.
-
-    Args:
-        chunk_meta: dict mapping chunk_id → {"text": str, "title": str, "url": str}
+    Called once at startup (lifespan) to initialize Qdrant client and embedding model.
+    No longer holds 64k chunks in RAM; metadata is loaded on demand.
     """
-    global _qdrant_client, _embedding_model, _chunk_meta
+    global _qdrant_client, _embedding_model, _chunk_cache
 
     settings = get_settings()
 
     logger.info(f"Connecting to Qdrant Cloud: {settings.qdrant_url}")
     _qdrant_client = QdrantClient(url=settings.qdrant_url, api_key=settings.qdrant_api_key)
     _embedding_model = OpenRouterEmbeddingAPI()
-    _chunk_meta = chunk_meta
+    if chunk_meta:
+        for k, v in list(chunk_meta.items())[:_MAX_CACHE_SIZE]:
+            _chunk_cache[k] = v
 
     collection_name = f"vn_finance_{settings.chunk_strategy}"
     info = _qdrant_client.get_collection(collection_name)
@@ -69,10 +111,20 @@ def _dense_retrieve(query: str, top_k: int) -> list[tuple[str, float]]:
         collection_name=collection_name,
         query=query_emb,
         limit=top_k,
+        with_payload=True,
     )
 
     rag_retrieval_latency_seconds.labels(type="dense").observe(time.perf_counter() - t0)
-    return [(hit.payload["chunk_id"], float(hit.score)) for hit in results.points if "chunk_id" in hit.payload]
+
+    dense_results = []
+    for hit in results.points:
+        if hit.payload and "chunk_id" in hit.payload:
+            cid = hit.payload["chunk_id"]
+            score = float(hit.score) if isinstance(hit.score, (int, float, str)) else 0.0
+            _cache_chunk_payload(cid, hit.payload)
+            dense_results.append((cid, score))
+
+    return dense_results
 
 
 def _sparse_retrieve(query: str, top_k: int) -> list[tuple[str, float]]:
@@ -128,7 +180,9 @@ def _rerank(query: str, candidates: list[tuple[str, float]], top_n: int) -> list
     settings = get_settings()
     t0 = time.perf_counter()
 
-    docs = [_chunk_meta.get(cid, {}).get("text", "") for cid, _ in candidates]
+    cids = [cid for cid, _ in candidates]
+    meta_map = get_chunk_meta(cids)
+    docs = [meta_map.get(cid, {}).get("text", "") for cid in cids]
     valid = [(c, d) for c, d in zip(candidates, docs) if d.strip()]
     if not valid:
         return candidates[:top_n]
@@ -172,9 +226,11 @@ def retrieve(query: str) -> list[dict[str, Any]]:
     reranked = _rerank(query, fused, top_n=settings.top_k_rerank)
 
     # Step 5: Build result dicts
+    cids = [cid for cid, _ in reranked]
+    meta_map = get_chunk_meta(cids)
     results = []
     for cid, score in reranked:
-        meta = _chunk_meta.get(cid, {})
+        meta = meta_map.get(cid, {})
         text = meta.get("text", "")
         if text.strip():
             results.append({
@@ -208,9 +264,11 @@ def fuse_and_rerank(query: str, dense: list, sparse: list) -> list[dict[str, Any
     settings = get_settings()
     fused = _rrf(dense, sparse, k=settings.rrf_k, top_n=settings.top_k_hybrid)
     reranked = _rerank(query, fused, top_n=settings.top_k_rerank)
+    cids = [cid for cid, _ in reranked]
+    meta_map = get_chunk_meta(cids)
     results = []
     for cid, score in reranked:
-        meta = _chunk_meta.get(cid, {})
+        meta = meta_map.get(cid, {})
         text = meta.get("text", "")
         if text.strip():
             results.append({
